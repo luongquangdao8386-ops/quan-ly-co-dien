@@ -4,6 +4,8 @@
  *          nhập Excel, nhật ký. Chạy trên GitHub Pages, dữ liệu qua Apps Script.
  * Phiên 2: phiếu sửa chữa (báo hỏng → nhận → chờ vật tư → hoàn thành → duyệt đóng),
  *          tự đổi trạng thái máy, lịch sử sửa chữa theo máy, danh mục Loại hư hỏng.
+ * Phiên 3: bảo trì kế hoạch — kế hoạch theo chu kỳ + checklist, ghi thực hiện (phiếu BT),
+ *          quản lý duyệt / trả lại, lịch 12 tháng, thẻ đến hạn trên trang chủ và trang máy.
  * ===================================================================== */
 'use strict';
 
@@ -11,7 +13,7 @@
 const API_URL = 'https://script.google.com/macros/s/AKfycbx0IuT4Ybp9jM_Pmzmh0NU4Ad9Heg8d3D0RVPL3jfe3fKUTVocFt1RkpwUWAw5-i7wD/exec';
 // Link app trên GitHub Pages — mã QR trên tem trỏ về đây:
 const APP_URL = 'https://luongquangdao8386-ops.github.io/quan-ly-co-dien/';
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 const SCAN_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
 const STOP_CODES = ['DUNG', 'DANGSUA'];
@@ -31,7 +33,10 @@ const S = {
   form: null, scanner: null, scanBusy: false, tem: null, imp: null, mau: null,
   nk: { rows: [], total: 0, loading: false, q: '' }, installEvt: null, updating: false,
   // Phiếu sửa chữa: bộ lọc danh sách, form đang mở, máy đã tải đủ lịch sử, số phiếu cũ đã tải
-  scf: { tab: 'XL', kv: '', q: '' }, scForm: null, scLoaded: new Set(), scOldLoaded: 0, scOldBusy: false
+  scf: { tab: 'XL', kv: '', q: '' }, scForm: null, scLoaded: new Set(), scOldLoaded: 0, scOldBusy: false,
+  // Bảo trì kế hoạch: bộ lọc, form đang mở, lịch sử đã tải, kết quả hạng mục đã tải, lịch năm
+  btf: { tab: 'CAN', kv: '', nhom: '', q: '' }, btForm: null, khForm: null, btLoaded: new Set(), btKhLoaded: new Set(),
+  btOldLoaded: 0, btOldBusy: false, btKQ: {}, btKQBusy: {}, btYear: {}, btYearBusy: false, btNam: { y: 0, kv: '', nhom: '', q: '' }
 };
 
 /* ============================== TIỆN ÍCH ============================== */
@@ -148,7 +153,10 @@ const IC = {
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
   ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
   checkCircle: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
-  stop: '<circle cx="12" cy="12" r="9"/><rect x="9" y="9" width="6" height="6" rx="1"/>'
+  stop: '<circle cx="12" cy="12" r="9"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
+  repeat: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+  grid: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 4v17M13 4v17M3 15h18"/>',
+  forward: '<rect x="3" y="5" width="13" height="15" rx="2"/><path d="M3 10h13M7 3v4M12 3v4M16 14h6M19 11l3 3-3 3"/>'
 };
 function ic(name, cls) {
   return `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true">${IC[name] || ''}</svg>`;
@@ -268,10 +276,16 @@ async function refresh(silent) {
     S.data = {
       thietBi: d.thietBi, danhMuc: d.danhMuc, mauKiemTra: d.mauKiemTra, cauHinh: d.cauHinh,
       phieuSC: d.phieuSC || [], scOld: d.scOld || 0,
+      keHoachBT: d.keHoachBT || [], hangMucBT: d.hangMucBT || [], phieuBT: d.phieuBT || [], btOld: d.btOld || 0,
       ktvSet: d.ktvSet, role: d.role, savedAt: new Date().toISOString()
     };
     S.scLoaded = new Set();
     S.scOldLoaded = 0;
+    S.btLoaded = new Set();
+    S.btKhLoaded = new Set();
+    S.btOldLoaded = 0;
+    S.btKQ = {};
+    S.btYear = {};
     if (S.auth.role !== d.role) { S.auth.role = d.role; lsSet(LS.auth, JSON.stringify(S.auth)); }
     saveCache();
     rerenderIfLive();
@@ -639,8 +653,7 @@ VIEWS.home = () => {
   const stopped = tbs.filter(x => STOP_CODES.includes(x.TrangThai))
     .sort((a, b) => STOP_CODES.indexOf(a.TrangThai) - STOP_CODES.indexOf(b.TrangThai) || String(b.NgaySua).localeCompare(String(a.NgaySua)));
   const soon = [
-    ['pmDue', 'calendar'], ['checkToday', 'checklist'],
-    ['contractsDue', 'file'], ['energyMonth', 'flash'], ['leakAlert', 'alert']
+    ['checkToday', 'checklist'], ['contractsDue', 'file'], ['energyMonth', 'flash'], ['leakAlert', 'alert']
   ];
   const warnKtv = isQL() && S.data.ktvSet === false;
   return {
@@ -653,6 +666,7 @@ VIEWS.home = () => {
         <a class="stat ${stopped.length ? 'bad' : ''}" href="#/tb" data-act="filterTo" data-tt="_STOP">${ic('alert')}<b>${fmtNum(stopped.length)}</b>${t('statStopped')}</a>
       </div>
       ${homeScCard()}
+      ${homeBtCard()}
       <section class="card">
         <div class="card-h">${ic('alert', stopped.length ? 'bad' : 'ok')}${t('stoppedTitle')}<span class="count">${stopped.length}</span></div>
         ${stopped.length ? `<div class="mini-list">${stopped.slice(0, 30).map(miniItem).join('')}</div>`
@@ -787,7 +801,7 @@ function viewDetail(id) {
   }
   const row = (key, val, raw) => `<div class="kv"><div class="k">${t(key)}</div><div class="v">${raw ? val : (val ? esc(val) : '<span class="muted">—</span>')}</div></div>`;
   const link = tb.LinkTaiLieu && /^https?:\/\//i.test(tb.LinkTaiLieu) ? tb.LinkTaiLieu : '';
-  const hist = [['histPM', 'calendar'], ['histCheck', 'checklist'], ['histHours', 'clock']];
+  const hist = [['histCheck', 'checklist'], ['histHours', 'clock']];
   const open = scOpenOfTb(tb.ID);
   const canReport = tb.TrangThai !== 'THANHLY';
   return {
@@ -823,12 +837,13 @@ function viewDetail(id) {
         ${row('fLinkTaiLieu', link ? `<a href="${esc(link)}" target="_blank" rel="noopener" class="link">${t('openDocs')}</a>` : '', true)}
       </section>
       ${tbScHistory(tb)}
+      ${tbBtSection(tb)}
       <section class="card">
         <div class="card-h">${ic('log')}${t('history')}</div>
         ${hist.map(h => `<div class="soon-row">${ic(h[1])}${t(h[0])}<span class="soon-tag">${t('comingSoon')}</span></div>`).join('')}
       </section>
       <p class="muted small audit">${t('createdBy', fmtTime(tb.NgayTao), tb.NguoiTao || '—')}<br>${t('updatedBy', fmtTime(tb.NgaySua), tb.NguoiSua || '—')}</p>`,
-    after: () => loadTbScHistory(tb.ID)
+    after: () => { loadTbScHistory(tb.ID); loadTbBtHistory(tb.ID); }
   };
 }
 
@@ -970,7 +985,7 @@ async function saveTbForm(ev) {
 function reasonKey(r) {
   return ({ REQUIRED: 'eRequired', INVALID_CODE: 'eCode', BAD_YEAR: 'eYear', BAD_NUMBER: 'eNumber', BAD_LINK: 'eLink',
     NOT_FOUND: 'eIdNotFound', DUPLICATE: 'eDupCode', BAD_CODE: 'eBadCode', SYSTEM_CODE: 'eSystemCode', MIN_GT_MAX: 'eMinMax',
-    BAD_TIME: 'eTime', FUTURE: 'eFuture', TIME_ORDER: 'eTimeOrder', RETIRED: 'eRetired' })[r] || 'eInvalid';
+    BAD_TIME: 'eTime', FUTURE: 'eFuture', TIME_ORDER: 'eTimeOrder', RETIRED: 'eRetired', BAD_DATE: 'eDate' })[r] || 'eInvalid';
 }
 
 function needOnline() {
@@ -1129,6 +1144,10 @@ VIEWS.cv = () => {
   const open = allSC().filter(x => SC_OPEN.includes(x.TrangThaiPhieu));
   const nWork = open.filter(x => x.TrangThaiPhieu !== 'CHODUYET').length;
   const nApprove = open.length - nWork;
+  const ST = khStatuses();
+  const nDue = allKH().filter(k => KH_DUE.includes(ST.get(k.MaKH).st)).length;
+  const nLate = allKH().filter(k => ST.get(k.MaKH).st === 'QUAHAN').length;
+  const nPend = allBT().filter(x => BT_CHO.includes(x.TrangThaiPhieu)).length;
   return {
     title: 'tabWork', live: true,
     html: `
@@ -1138,7 +1157,11 @@ VIEWS.cv = () => {
           <div class="mi-text">${t('repairTickets')}<span class="mi-desc">${t('repairDesc')}</span></div>
           ${nWork ? `<span class="badge sc-DANGXL">${nWork}</span>` : ''}${nApprove ? `<span class="badge sc-CHODUYET">${nApprove}</span>` : ''}
           ${ic('chev', 'mi-chev')}</a>
-        ${[['pmPlan', 'calendar', 'pmDesc'], ['shiftCheck', 'checklist', 'checkDesc'], ['runHours', 'clock', 'hoursDesc']]
+        <a class="menu-item" href="#/bt" data-act="btTabGo" data-t="${nDue || !nPend ? 'CAN' : 'DUYET'}">${ic('calendar', 'mi')}
+          <div class="mi-text">${t('pmPlan')}<span class="mi-desc">${t('pmDesc')}</span></div>
+          ${nDue ? `<span class="badge kh-${nLate ? 'QUAHAN' : 'DENHAN'}">${nDue}</span>` : ''}${nPend ? `<span class="badge bt-CHODUYET">${nPend}</span>` : ''}
+          ${ic('chev', 'mi-chev')}</a>
+        ${[['shiftCheck', 'checklist', 'checkDesc'], ['runHours', 'clock', 'hoursDesc']]
         .map(m => `<div class="menu-item soon-item">${ic(m[1], 'mi')}<div class="mi-text">${t(m[0])}<span class="mi-desc">${t(m[2])}</span></div><span class="soon-tag">${t('comingSoon')}</span></div>`).join('')}
       </div>`
   };
@@ -1395,7 +1418,8 @@ const SC_CSV = [
   ['TGChayLai', 'Máy chạy lại lúc', '恢复运行时间'], ['PhutPhanHoi', 'Phản hồi (phút)', '响应（分钟）'],
   ['PhutSua', 'Sửa (phút)', '维修（分钟）'], ['PhutCho', 'Chờ vật tư (phút)', '待料（分钟）'],
   ['PhutDungMay', 'Dừng máy (phút)', '停机（分钟）'], ['NguoiDuyet', 'Người duyệt', '审核人'],
-  ['TGDuyet', 'Duyệt lúc', '审核时间'], ['YKienDuyet', 'Ý kiến duyệt', '审核意见'], ['LyDoHuy', 'Lý do hủy', '作废原因']
+  ['TGDuyet', 'Duyệt lúc', '审核时间'], ['YKienDuyet', 'Ý kiến duyệt', '审核意见'], ['LyDoHuy', 'Lý do hủy', '作废原因'],
+  ['PhieuNguon', 'Từ phiếu', '来源单号']
 ];
 function exportScCsv() {
   const list = scFiltered();
@@ -1422,7 +1446,7 @@ VIEWS.sc = p => {
   if (p[1]) return viewScDetail(p[1]);
   return viewScList();
 };
-VIEWS['sc-moi'] = p => viewScForm('new', null, p[1]);
+VIEWS['sc-moi'] = p => viewScForm('new', null, p[1], p[2]);
 
 function viewScDetail(so) {
   if (!S.data) return loadingView();
@@ -1479,6 +1503,7 @@ function viewScDetail(so) {
         </div>
       </section>
       ${notices.join('')}
+      ${scSourceLink(sc.PhieuNguon)}
       ${tb ? `<a class="card tb-link ${statusCls(tb.TrangThai)}" href="#/tb/${encodeURIComponent(tb.ID)}">
           <div class="grow"><div class="mini-top"><span class="tb-id">${esc(tb.ID)}</span>${tb.MaNhaMay ? `<span class="tb-ma">${esc(tb.MaNhaMay)}</span>` : ''}</div>
             ${bi(tb.TenMay, tb.TenMayZH, 'tb-name')}${dmBi('KHUVUC', tb.ViTri, 'meta')}</div>
@@ -1575,7 +1600,14 @@ async function fetchMissingSC(so) {
 }
 
 /* ---- Biểu mẫu: tạo (new) · sửa (edit) · hoàn thành (done) ---- */
-function viewScForm(mode, so, tbId) {
+/** Liên kết tới phiếu sinh ra phiếu sửa chữa này (VD phiếu bảo trì có hạng mục không đạt) */
+function scSourceLink(src) {
+  if (!src) return '';
+  if (/^BT-/i.test(src)) return `<a class="notice src-link" href="#/bt/${encodeURIComponent(src)}">${ic('checklist')}<div>${t('scFromBt', src)}</div>${ic('chev')}</a>`;
+  return `<div class="notice">${ic('info')}<div>${t('scFromSrc', src)}</div></div>`;
+}
+
+function viewScForm(mode, so, tbId, src) {
   if (!S.data) return loadingView();
   let cur = null;
   if (mode !== 'new') {
@@ -1589,9 +1621,19 @@ function viewScForm(mode, so, tbId) {
   }
   const pre = tbId ? tbById(tbId) : null;
   const nowTs = tsNow();
+  const srcBt = mode === 'new' && src ? btBySo(src) : null;
   const F = S.scForm = cur ? Object.assign({}, cur) : {
     IDThietBi: pre && pre.TrangThai !== 'THANHLY' ? pre.ID : '', MoTa: '', NguoiBao: '', TGBao: nowTs, MayDung: '1', TGDung: nowTs, GhiChu: ''
   };
+  if (srcBt) {
+    // Tạo từ phiếu bảo trì: điền sẵn mô tả các hạng mục không đạt, mặc định máy vẫn chạy
+    F.PhieuNguon = srcBt.SoPhieu;
+    F.MoTa = scMoTaFromBt(srcBt);
+    F.NguoiBao = S.name;
+    F.MayDung = '0';
+    F.TGDung = '';
+    if (!S.btKQ[srcBt.SoPhieu] && S.online) setTimeout(() => loadBtKQ(srcBt.SoPhieu), 0);
+  }
   if (isOn(F.MayDung) && !F.TGDung) F.TGDung = F.TGBao;
   S.scFormMode = mode;
   S.scFormOrig = cur ? cur.NgaySua : undefined;
@@ -1637,6 +1679,7 @@ function viewScForm(mode, so, tbId) {
     html: `
       <form id="f-sc" class="form" autocomplete="off" novalidate>
         ${summary}
+        ${mode === 'new' ? scSourceLink(F.PhieuNguon) : ''}
         ${mode !== 'done' ? `<section class="card pad">
           <div class="card-h flat">${ic('alert')}${t('scReportInfo')}</div>
           ${tbBlock}
@@ -1757,6 +1800,7 @@ function scCollect(form) {
   });
   if ($('[data-fld="IDThietBi"]', form)) o.IDThietBi = S.scForm.IDThietBi || '';
   if ($('[data-fld="LoaiHong"]', form)) o.LoaiHong = S.scForm.LoaiHong || '';
+  if (form.id === 'f-sc' && S.scFormMode === 'new' && S.scForm.PhieuNguon) o.PhieuNguon = S.scForm.PhieuNguon;
   return o;
 }
 
@@ -1963,6 +2007,1490 @@ async function scDelete(so) {
     toast(tr('scDeleted', [so]), 'ok');
     location.replace('#/sc');
   } catch (e) { await scHandleErr(e); }
+}
+
+/* --------------------------- Bảo trì kế hoạch (phiên 3) --------------------------- */
+/* Kế hoạch (KH0001…) = 1 máy + 1 công việc + chu kỳ + checklist. Ghi thực hiện → phiếu BT-yyyy-nnnn
+ * (chờ duyệt). Quản lý duyệt thì kế hoạch mới dời hạn lần sau; trả lại → KTV sửa rồi gửi lại.
+ * Hạn lần sau: THUCTE = ngày làm + chu kỳ · LICH = hạn cũ + k × chu kỳ (giữ đúng lịch). */
+
+const BT_CHO = ['CHODUYET', 'TRALAI'];
+const BT_UNITS = ['NGAY', 'TUAN', 'THANG', 'NAM'];
+const KH_ORDER = ['QUAHAN', 'DENHAN', 'CHODUYET', 'CHUADEN', 'MAYNGUNG', 'NGUNG'];
+const KH_DUE = ['QUAHAN', 'DENHAN'];
+const MAY_NGUNG = ['NGUNG', 'THANHLY'];
+const BT_TABS = [
+  { id: 'CAN', key: 'btTabDue' },
+  { id: 'DUYET', key: 'btTabApprove' },
+  { id: 'XONG', key: 'btTabDone' },
+  { id: 'KH', key: 'btTabPlans' }
+];
+
+/* ---- Ngày dạng yyyy-MM-dd (tính theo UTC, không lệch múi giờ) ---- */
+function dToday() { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function dMs(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN; }
+function dFmt(ms) { return new Date(ms).toISOString().slice(0, 10); }
+function dAdd(s, n, unit) {
+  const ms = dMs(s);
+  if (unit === 'NGAY') return dFmt(ms + n * 86400000);
+  if (unit === 'TUAN') return dFmt(ms + n * 7 * 86400000);
+  const d = new Date(ms);
+  const mo = d.getUTCMonth() + (unit === 'NAM' ? 12 * n : n);
+  const last = new Date(Date.UTC(d.getUTCFullYear(), mo + 1, 0)).getUTCDate();
+  return dFmt(Date.UTC(d.getUTCFullYear(), mo, Math.min(d.getUTCDate(), last)));
+}
+function dDiff(a, b) { return Math.round((dMs(b) - dMs(a)) / 86400000); }
+function fmtDate(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; }
+function tsAddMin(ts, min) {
+  const ms = tsMs(ts) + min * 60000;
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`;
+}
+
+/* ---- Chu kỳ, hạn (giống hệt backend btNext_ / btEffDue_) ---- */
+function khUnit(kh) { return BT_UNITS.includes(kh.ChuKyDonVi) ? kh.ChuKyDonVi : 'THANG'; }
+function khN(kh) { return Math.max(1, Number(kh.ChuKySo) || 1); }
+function khNext(kh, han, ngay) {
+  const n = khN(kh), u = khUnit(kh);
+  if (kh.CachTinhHan === 'LICH' && han) {
+    let k = 1, next = dAdd(han, n * k, u);
+    while (next <= ngay && k < 20000) { k++; next = dAdd(han, n * k, u); }
+    return next;
+  }
+  return dAdd(ngay, n, u);
+}
+function khEffDue(kh, pend) {
+  let due = kh.HanTiepTheo || '';
+  let last = kh.LanCuoi || '';
+  (pend || []).slice().sort((a, b) => String(a.TGKetThuc).localeCompare(String(b.TGKetThuc))).forEach(p => {
+    const ngay = String(p.TGKetThuc).slice(0, 10);
+    if (last && ngay < last) return;
+    const nx = khNext(kh, due || ngay, ngay);
+    if (!due || nx > due) due = nx;
+    last = ngay;
+  });
+  return due;
+}
+function khCycleDays(kh) { return khN(kh) * ({ NGAY: 1, TUAN: 7, THANG: 30, NAM: 365 }[khUnit(kh)]); }
+/** Số ngày trước hạn tính là "Đến hạn": 7 ngày; chu kỳ dưới 1 tháng thì 1/4 chu kỳ. */
+function khWindow(kh) { const c = khCycleDays(kh); return c >= 28 ? 7 : Math.floor(c / 4); }
+function cycleTr(kh) { return tr('cyc' + khUnit(kh), [khN(kh)]); }
+
+/* ---- Dữ liệu ---- */
+function allKH() { return (S.data && S.data.keHoachBT) || []; }
+function allHM() { return (S.data && S.data.hangMucBT) || []; }
+function allBT() { return (S.data && S.data.phieuBT) || []; }
+function khByMa(ma) { const k = String(ma || '').toUpperCase(); return allKH().find(x => String(x.MaKH).toUpperCase() === k) || null; }
+function khOfTb(id) { const k = String(id || '').toUpperCase(); return allKH().filter(x => String(x.IDThietBi).toUpperCase() === k); }
+function hmOf(ma) {
+  const k = String(ma || '').toUpperCase();
+  return allHM().filter(x => String(x.MaKH).toUpperCase() === k).sort((a, b) => (Number(a.STT) || 0) - (Number(b.STT) || 0));
+}
+function btBySo(so) { const k = String(so || '').toUpperCase(); return allBT().find(x => String(x.SoPhieu).toUpperCase() === k) || null; }
+function btSortDesc(a, b) { return String(b.TGKetThuc || '').localeCompare(String(a.TGKetThuc || '')) || String(b.SoPhieu).localeCompare(String(a.SoPhieu)); }
+function btOfKh(ma) { const k = String(ma || '').toUpperCase(); return allBT().filter(x => String(x.MaKH).toUpperCase() === k).sort(btSortDesc); }
+function btOfTb(id) { const k = String(id || '').toUpperCase(); return allBT().filter(x => String(x.IDThietBi).toUpperCase() === k).sort(btSortDesc); }
+function mergeBT(rows) {
+  if (!S.data) return;
+  const arr = S.data.phieuBT || (S.data.phieuBT = []);
+  rows.forEach(bt => { const i = arr.findIndex(x => x.SoPhieu === bt.SoPhieu); if (i >= 0) arr[i] = bt; else arr.push(bt); });
+  saveCache();
+}
+function removeBT(so) {
+  if (!S.data || !S.data.phieuBT) return;
+  S.data.phieuBT = S.data.phieuBT.filter(x => x.SoPhieu !== so);
+  delete S.btKQ[so];
+  saveCache();
+}
+function upsertKH(kh) {
+  if (!S.data || !kh) return;
+  const arr = S.data.keHoachBT || (S.data.keHoachBT = []);
+  const i = arr.findIndex(x => x.MaKH === kh.MaKH);
+  if (i >= 0) arr[i] = kh; else arr.push(kh);
+  saveCache();
+}
+function btPendIdx() {
+  const m = {};
+  allBT().forEach(x => { if (BT_CHO.includes(x.TrangThaiPhieu)) (m[x.MaKH] = m[x.MaKH] || []).push(x); });
+  return m;
+}
+
+/** Trạng thái kế hoạch: QUAHAN · DENHAN · CHODUYET (đã làm, chờ duyệt) · CHUADEN · MAYNGUNG · NGUNG */
+function khStatus(kh, idx, today) {
+  idx = idx || btPendIdx();
+  today = today || dToday();
+  const pend = idx[kh.MaKH] || [];
+  const tb = tbById(kh.IDThietBi);
+  const due = khEffDue(kh, pend);
+  const days = due ? dDiff(today, due) : null;
+  let st;
+  if (!isOn(kh.DangDung)) st = 'NGUNG';
+  else if (!tb || MAY_NGUNG.includes(tb.TrangThai)) st = 'MAYNGUNG';
+  else if (days === null) st = 'CHUADEN';
+  else if (days < 0) st = 'QUAHAN';
+  else if (days <= khWindow(kh)) st = 'DENHAN';
+  else st = pend.length ? 'CHODUYET' : 'CHUADEN';
+  return { st, due, days, pend: pend.length, tb };
+}
+function khStatuses() {
+  const idx = btPendIdx(), today = dToday(), m = new Map();
+  allKH().forEach(k => m.set(k.MaKH, khStatus(k, idx, today)));
+  return m;
+}
+function khSortBy(ST) {
+  return (a, b) => {
+    const x = ST.get(a.MaKH), y = ST.get(b.MaKH);
+    return KH_ORDER.indexOf(x.st) - KH_ORDER.indexOf(y.st) || String(x.due || '9').localeCompare(String(y.due || '9')) ||
+      String(a.IDThietBi).localeCompare(String(b.IDThietBi), 'en', { numeric: true });
+  };
+}
+
+/* ---- Hiển thị ---- */
+function khPill(st) { return `<span class="pill kh-${esc(st)}">${t('kh' + st)}</span>`; }
+function btPill(st) { return `<span class="pill bt-${esc(st)}">${t('bt' + st)}</span>`; }
+function dueTr(s) {
+  if (s.days === null || s.days === undefined) return { vi: '—', zh: '' };
+  if (s.days < 0) return tr('dueLate', [-s.days]);
+  if (s.days === 0) return tr('dueToday');
+  if (s.days === 1) return tr('dueTomorrow');
+  return tr('dueIn', [s.days]);
+}
+function dueHtml(s) {
+  if (!s.due) return '';
+  const x = dueTr(s);
+  const show = KH_DUE.includes(s.st) || s.st === 'CHUADEN' || s.st === 'CHODUYET';
+  return `<span class="due kh-${esc(s.st)}">${ic('calendar')}${bi(show ? `${x.vi} · ${fmtDate(s.due)}` : fmtDate(s.due), show ? x.zh : '')}</span>`;
+}
+function cycHtml(kh) { const c = cycleTr(kh); return `<span class="cyc">${ic('repeat')}${bi(c.vi, c.zh)}</span>`; }
+/** Làm so với hạn: đúng hạn / sớm / trễ N ngày */
+function btTiming(bt) {
+  const ngay = String(bt.TGKetThuc || '').slice(0, 10);
+  if (!bt.HanKeHoach || !ngay) return '';
+  const d = dDiff(bt.HanKeHoach, ngay);
+  const x = d > 0 ? tr('timeLate', [d]) : (d < 0 ? tr('timeEarly', [-d]) : tr('timeOnDue'));
+  return `<span class="tag ${d > 0 ? 'warn' : 'ok'}">${bi(x.vi, x.zh)}</span>`;
+}
+function kqSumHtml(bt) {
+  const all = Number(bt.SoMuc) || 0, bad = Number(bt.SoMucKhongDat) || 0;
+  if (!all) return '';
+  return `<span class="kq-sum ${bad ? 'bad' : 'ok'}">${ic(bad ? 'alert' : 'checkCircle')}${bad ? t('kqBadN', bad, all) : t('kqAllOk', all)}</span>`;
+}
+function kqTag(k) {
+  if (k === 'DAT') return `<span class="tag ok">${ic('check')}${t('kqDAT')}</span>`;
+  if (k === 'KHONGDAT') return `<span class="tag bad">${ic('x')}${t('kqKHONGDAT')}</span>`;
+  return '';
+}
+function rangeText(it) {
+  const a = it.Min !== '' && it.Min !== undefined && it.Min !== null, b = it.Max !== '' && it.Max !== undefined && it.Max !== null;
+  if (!a && !b) return '';
+  const u = it.DonVi ? ' ' + it.DonVi : '';
+  if (a && b) return `${fmtNum(it.Min)} – ${fmtNum(it.Max)}${u}`;
+  return a ? `≥ ${fmtNum(it.Min)}${u}` : `≤ ${fmtNum(it.Max)}${u}`;
+}
+function tbLine(id) {
+  const tb = tbById(id);
+  return `<div class="sc-tbline"><span class="tb-id">${esc(id)}</span> ${tb ? bi(tb.TenMay, tb.TenMayZH, 'tb-name') : ''}</div>`;
+}
+function tbCard(id) {
+  const tb = tbById(id);
+  if (!tb) return `<div class="card pad slim"><span class="tb-id">${esc(id)}</span></div>`;
+  return `<a class="card tb-link ${statusCls(tb.TrangThai)}" href="#/tb/${encodeURIComponent(tb.ID)}">
+    <div class="grow"><div class="mini-top"><span class="tb-id">${esc(tb.ID)}</span>${tb.MaNhaMay ? `<span class="tb-ma">${esc(tb.MaNhaMay)}</span>` : ''}</div>
+      ${bi(tb.TenMay, tb.TenMayZH, 'tb-name')}${dmBi('KHUVUC', tb.ViTri, 'meta')}</div>
+    ${pill(tb.TrangThai)}${ic('chev', 'mi-chev')}</a>`;
+}
+
+function khItem(kh, s) {
+  const tb = s.tb;
+  return `<a class="kh-item kh-${esc(s.st)}" href="#/kh/${encodeURIComponent(kh.MaKH)}">
+    <div class="tb-top"><span class="tb-id">${esc(kh.IDThietBi)}</span>${tb && tb.MaNhaMay ? `<span class="tb-ma">${esc(tb.MaNhaMay)}</span>` : ''}<span class="sp"></span>${khPill(s.st)}</div>
+    ${tb ? bi(tb.TenMay, tb.TenMayZH, 'tb-name') : ''}
+    <div class="kh-name">${ic('wrench')}${bi(kh.TenVI, kh.TenZH)}</div>
+    <div class="sc-meta">${dueHtml(s)}<span class="sp"></span>${cycHtml(kh)}</div>
+    ${s.pend ? `<div class="pend-note">${ic('clock')}${t('khPendN', s.pend)}</div>` : ''}
+  </a>`;
+}
+function khMini(kh, s, withTb) {
+  const tb = s.tb;
+  return `<a class="mini kh-${esc(s.st)}" href="#/kh/${encodeURIComponent(kh.MaKH)}">
+    <div class="mini-main">
+      ${withTb ? `<div class="sc-tbline"><span class="tb-id">${esc(kh.IDThietBi)}</span> ${tb ? `<span class="tb-name">${esc(tb.TenMay)}</span>` : ''}</div>` : ''}
+      <div class="kh-name">${bi(kh.TenVI, kh.TenZH)}</div>
+      <div class="sc-meta">${dueHtml(s)}${withTb ? '' : `<span class="sp"></span>${cycHtml(kh)}`}</div>
+    </div>
+    ${khPill(s.st)}
+  </a>`;
+}
+function btItem(bt) {
+  const tb = tbById(bt.IDThietBi);
+  return `<a class="sc-item bt-${esc(bt.TrangThaiPhieu)}" href="#/bt/${encodeURIComponent(bt.SoPhieu)}">
+    <div class="tb-top"><span class="sc-no">${esc(bt.SoPhieu)}</span>${btPill(bt.TrangThaiPhieu)}<span class="sp"></span><span class="muted small">${esc(fmtShort(bt.TGKetThuc))}</span></div>
+    <div class="sc-tbline"><span class="tb-id">${esc(bt.IDThietBi)}</span> ${tb ? bi(tb.TenMay, tb.TenMayZH, 'tb-name') : ''}</div>
+    <div class="kh-name">${ic('wrench')}${bi(bt.TenVI, bt.TenZH)}</div>
+    <div class="sc-meta">${kqSumHtml(bt)}${btTiming(bt)}<span class="sp"></span><span class="muted small">${esc(bt.NguoiThucHien)}</span></div>
+  </a>`;
+}
+function btMini(bt, withName) {
+  return `<a class="mini bt-${esc(bt.TrangThaiPhieu)}" href="#/bt/${encodeURIComponent(bt.SoPhieu)}">
+    <div class="mini-main">
+      <div class="mini-top"><span class="sc-no">${esc(bt.SoPhieu)}</span><span class="muted small">${esc(fmtShort(bt.TGKetThuc))}</span></div>
+      ${withName ? `<div class="kh-name">${bi(bt.TenVI, bt.TenZH)}</div>` : ''}
+      <div class="sc-meta">${kqSumHtml(bt)}${btTiming(bt)}</div>
+    </div>
+    ${btPill(bt.TrangThaiPhieu)}
+  </a>`;
+}
+
+/* ---- Trang chủ ---- */
+function homeBtCard() {
+  const ST = khStatuses();
+  const due = allKH().filter(k => KH_DUE.includes(ST.get(k.MaKH).st)).sort(khSortBy(ST));
+  const nQ = due.filter(k => ST.get(k.MaKH).st === 'QUAHAN').length;
+  const nP = allBT().filter(x => BT_CHO.includes(x.TrangThaiPhieu)).length;
+  const cells = [['QUAHAN', nQ, 'CAN', 'khQUAHAN'], ['DENHAN', due.length - nQ, 'CAN', 'khDENHAN'], ['CHODUYET', nP, 'DUYET', 'btCHODUYET']];
+  return `<section class="card">
+    <div class="card-h">${ic('calendar', nQ ? 'bad' : (due.length ? 'warn' : 'ok'))}${t('pmDue')}<span class="count">${due.length}</span></div>
+    <div class="sc-counters c3">
+      ${cells.map(([st, n, tab, key]) => `<a class="scc kh-${st}${n ? ' has' : ''}" href="#/bt" data-act="btTabGo" data-t="${tab}"><b>${n}</b>${t(key)}</a>`).join('')}
+    </div>
+    ${due.length ? `<div class="mini-list">${due.slice(0, 5).map(k => khMini(k, ST.get(k.MaKH), true)).join('')}</div>`
+      : `<div class="empty ok small">${ic('check')}${allKH().length ? t('btNoDue') : t('khNone')}</div>`}
+    <div class="card-f">
+      <a class="btn sm" href="#/bt-nam">${ic('grid')}${t('btYearPlan')}</a>
+      <span class="sp"></span>
+      <a class="link" href="#/bt" data-act="btTabGo" data-t="CAN">${t('scViewAll')}</a>
+    </div>
+  </section>`;
+}
+
+/* ---- Trang máy: kế hoạch + lịch sử bảo trì ---- */
+function tbBtSection(tb) {
+  const idx = btPendIdx(), today = dToday();
+  const plans = khOfTb(tb.ID).map(k => [k, khStatus(k, idx, today)])
+    .sort((a, b) => KH_ORDER.indexOf(a[1].st) - KH_ORDER.indexOf(b[1].st) || String(a[1].due).localeCompare(String(b[1].due)));
+  const hist = btOfTb(tb.ID);
+  const loading = S.online && !S.btLoaded.has(tb.ID);
+  return `<section class="card">
+      <div class="card-h">${ic('calendar')}${t('pmPlan')}<span class="count">${plans.length}</span></div>
+      ${plans.length ? `<div class="mini-list">${plans.map(([k, s]) => khMini(k, s, false)).join('')}</div>`
+        : `<div class="empty small">${t('khNoneForTb')}</div>`}
+      ${isQL() && tb.TrangThai !== 'THANHLY' ? `<div class="card-f"><a class="btn sm" href="#/kh-moi/${encodeURIComponent(tb.ID)}">${ic('plus')}${t('khAdd')}</a></div>` : ''}
+    </section>
+    <section class="card">
+      <div class="card-h">${ic('checklist')}${t('histPM')}<span class="count">${hist.length}</span></div>
+      ${hist.length ? `<div class="mini-list">${hist.slice(0, 30).map(x => btMini(x, true)).join('')}</div>` : ''}
+      ${loading ? `<div class="empty small"><div class="spinner"></div></div>` : (hist.length ? '' : `<div class="empty small">${t('btNoHistory')}</div>`)}
+    </section>`;
+}
+async function loadTbBtHistory(id) {
+  if (!S.online || S.btLoaded.has(id)) return;
+  S.btLoaded.add(id);
+  try { const r = await api('listBT', { id }); mergeBT(r.rows); } catch (e) { /* giữ dữ liệu đã có */ }
+  const p = route();
+  if (p[0] === 'tb' && p[1] && p[1].toUpperCase() === String(id).toUpperCase() && !p[2] && !$('.overlay.open')) {
+    const y = window.scrollY; render(true); window.scrollTo(0, y);
+  }
+}
+
+/* ---- Danh sách: Cần làm · Chờ duyệt · Đã làm · Kế hoạch ---- */
+function btMatch(id, extra) {
+  const f = S.btf;
+  const tb = tbById(id);
+  if (f.kv && (!tb || tb.ViTri !== f.kv)) return false;
+  if (f.nhom && (!tb || tb.NhomTB !== f.nhom)) return false;
+  const n = norm(f.q);
+  if (n) {
+    const hay = norm([id, tb && tb.TenMay, tb && tb.TenMayZH, tb && tb.MaNhaMay].concat(extra || []).join(' '));
+    if (!hay.includes(n)) return false;
+  }
+  return true;
+}
+function khFiltered(ST, onlyDue) {
+  return allKH().filter(k => (!onlyDue || KH_DUE.includes(ST.get(k.MaKH).st)) &&
+    btMatch(k.IDThietBi, [k.MaKH, k.TenVI, k.TenZH, k.NhaThau])).sort(khSortBy(ST));
+}
+function btFiltered(tab) {
+  const st = tab === 'DUYET' ? BT_CHO : ['DONG'];
+  return allBT().filter(x => st.includes(x.TrangThaiPhieu) &&
+    btMatch(x.IDThietBi, [x.SoPhieu, x.MaKH, x.TenVI, x.TenZH, x.NguoiThucHien, x.NhaThau, x.VatTu, x.NhanXet]))
+    .sort((a, b) => (tab === 'DUYET' ? BT_CHO.indexOf(b.TrangThaiPhieu) - BT_CHO.indexOf(a.TrangThaiPhieu) : 0) || btSortDesc(a, b));
+}
+
+function viewBtList() {
+  if (!S.data) return loadingView();
+  const f = S.btf;
+  const ST = khStatuses();
+  const nDue = allKH().filter(k => KH_DUE.includes(ST.get(k.MaKH).st)).length;
+  const nLate = allKH().filter(k => ST.get(k.MaKH).st === 'QUAHAN').length;
+  const nPend = allBT().filter(x => BT_CHO.includes(x.TrangThaiPhieu)).length;
+  return {
+    live: true, restoreScroll: true, title: 'pmPlan', back: 'cv', tab: 'cv',
+    html: `
+      <div class="toolbar sticky">
+        <div class="seg sc-tabs">${BT_TABS.map(x => {
+          const lb = tr(x.key);
+          const n = x.id === 'CAN' ? nDue : (x.id === 'DUYET' ? nPend : 0);
+          const cls = x.id === 'CAN' ? (nLate ? 'kh-QUAHAN' : 'kh-DENHAN') : 'bt-CHODUYET';
+          return `<a data-act="btTab" data-t="${x.id}" class="${x.id === f.tab ? 'on' : ''}">${bi(lb.vi, lb.zh)}${n ? `<span class="tcount ${cls}">${n}</span>` : ''}</a>`;
+        }).join('')}</div>
+        <div class="search">${ic('search')}<input type="search" id="bt-q" value="${esc(f.q)}" placeholder="${esc(tp('btSearch'))}" autocomplete="off"></div>
+        <div class="chips">
+          <a class="chip" href="#/bt-nam">${ic('grid')}${t('btYearPlan')}</a>
+          <button class="chip${f.kv ? ' on' : ''}" data-act="btFilter" data-k="kv">${ic('map')}${f.kv ? dmBi('KHUVUC', f.kv) : t('allAreas')}</button>
+          <button class="chip${f.nhom ? ' on' : ''}" data-act="btFilter" data-k="nhom">${ic('device')}${f.nhom ? dmBi('NHOMTB', f.nhom) : t('allGroups')}</button>
+        </div>
+      </div>
+      <div class="list-bar"><span id="bt-count" class="muted"></span><span class="sp"></span>
+        <button class="link" data-act="btCsv">${t('exportCsv')}</button></div>
+      <div id="bt-list"></div>
+      <div id="bt-more"></div>
+      ${isQL() ? `<a class="fab" href="#/kh-moi" aria-label="${esc(tp('khAdd'))}">${ic('plus')}</a>` : ''}`,
+    after: () => {
+      drawBtList();
+      $('#bt-q').addEventListener('input', debounce(e => { S.btf.q = e.target.value; drawBtList(); }, 150));
+    }
+  };
+}
+
+function drawBtList() {
+  const f = S.btf;
+  const box = $('#bt-list');
+  if (!box) return;
+  const more = $('#bt-more');
+  more.innerHTML = '';
+  if (f.tab === 'CAN' || f.tab === 'KH') {
+    const ST = khStatuses();
+    const list = khFiltered(ST, f.tab === 'CAN');
+    $('#bt-count').innerHTML = t('khNPlans', list.length);
+    if (!list.length) {
+      box.innerHTML = f.tab === 'CAN'
+        ? `<div class="empty ok">${ic('checkCircle')}${allKH().length ? t('btNoDue') : t('khNone')}</div>`
+        : `<div class="empty">${ic('calendar')}${allKH().length ? t('noResult') : t('khNone')}${isQL() && !allKH().length ? `<a class="btn primary" href="#/kh-moi">${ic('plus')}${t('khAdd')}</a>` : ''}</div>`;
+      return;
+    }
+    box.innerHTML = KH_ORDER.map(st => {
+      const g = list.filter(k => ST.get(k.MaKH).st === st);
+      if (!g.length) return '';
+      return `<h4 class="sec-h grp-h kh-${st}"><span class="dot"></span>${t('kh' + st)}<span class="count">${g.length}</span></h4>
+        <div class="tb-list">${g.slice(0, 300).map(k => khItem(k, ST.get(k.MaKH))).join('')}</div>`;
+    }).join('');
+    return;
+  }
+  const list = btFiltered(f.tab);
+  $('#bt-count').innerHTML = t('scNTickets', list.length);
+  box.innerHTML = list.length ? `<div class="tb-list">${list.slice(0, 300).map(btItem).join('')}</div>`
+    : `<div class="empty${f.tab === 'DUYET' ? ' ok' : ''}">${ic(f.tab === 'DUYET' ? 'checkCircle' : 'checklist')}${f.tab === 'DUYET' ? t('btNoPending') : (allBT().length ? t('noResult') : t('btNoRecords'))}</div>`;
+  const left = (S.data.btOld || 0) - S.btOldLoaded;
+  if (f.tab === 'XONG' && left > 0) more.innerHTML = `<button class="btn block" data-act="btLoadOld">${ic('download')}${t('scLoadOld', left)}</button>`;
+}
+
+async function btLoadOld(btn) {
+  if (!needOnline() || S.btOldBusy) return;
+  S.btOldBusy = true;
+  btn.disabled = true; btn.classList.add('loading');
+  try {
+    const r = await api('listBT', { old: true, offset: S.btOldLoaded, limit: 200 });
+    S.btOldLoaded += r.rows.length;
+    S.data.btOld = r.total;
+    mergeBT(r.rows);
+    drawBtList();
+  } catch (e) {
+    if (e.code !== 'AUTH') toast(errText(e), 'err');
+  } finally { S.btOldBusy = false; if (btn.isConnected) { btn.disabled = false; btn.classList.remove('loading'); } }
+}
+
+const KH_CSV = [
+  ['MaKH', 'Mã kế hoạch', '计划编号'], ['IDThietBi', 'ID', ''], ['_TenMay', 'Tên máy', '设备名称'], ['_KhuVuc', 'Khu vực', '区域'],
+  ['TenVI', 'Công việc', '保养内容'], ['TenZH', 'Công việc (Trung)', '保养内容(中文)'], ['_ChuKy', 'Chu kỳ', '周期'],
+  ['CachTinhHan', 'Cách tính hạn', '到期计算方式'], ['_Han', 'Hạn', '到期日'], ['_TrangThai', 'Trạng thái', '状态'],
+  ['LanCuoi', 'Lần gần nhất', '上次保养'], ['PhieuCuoi', 'Phiếu gần nhất', '上次保养单'], ['NhaThau', 'Nhà thầu', '外协单位'],
+  ['CanDungMay', 'Máy phải dừng', '需停机'], ['_SoMuc', 'Số hạng mục', '检查项目数'], ['DangDung', 'Đang dùng', '启用']
+];
+const BT_CSV = [
+  ['SoPhieu', 'Số phiếu', '单号'], ['TrangThaiPhieu', 'Trạng thái', '状态'], ['MaKH', 'Mã kế hoạch', '计划编号'],
+  ['IDThietBi', 'ID', ''], ['_TenMay', 'Tên máy', '设备名称'], ['_KhuVuc', 'Khu vực', '区域'], ['TenVI', 'Công việc', '保养内容'],
+  ['HanKeHoach', 'Hạn kế hoạch', '计划到期日'], ['TGBatDau', 'Bắt đầu', '开始时间'], ['TGKetThuc', 'Kết thúc', '结束时间'],
+  ['PhutThucHien', 'Thực hiện (phút)', '实施（分钟）'], ['MayDung', 'Máy dừng', '是否停机'], ['PhutDungMay', 'Dừng máy (phút)', '停机（分钟）'],
+  ['NguoiThucHien', 'Người thực hiện', '执行人'], ['NhaThau', 'Nhà thầu', '外协单位'], ['VatTu', 'Vật tư', '更换备件'],
+  ['GioChay', 'Giờ chạy', '运行小时'], ['SoMuc', 'Số hạng mục', '检查项目数'], ['SoMucKhongDat', 'Không đạt', '不合格'],
+  ['NhanXet', 'Nhận xét', '备注'], ['NguoiDuyet', 'Người duyệt', '审核人'], ['TGDuyet', 'Duyệt lúc', '审核时间'], ['YKienDuyet', 'Ý kiến duyệt', '审核意见']
+];
+function csvHead(cols) { return cols.map(c => c[2] ? `${c[1]} / ${c[2]}` : c[1]); }
+function exportBtCsv() {
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
+  if (S.btf.tab === 'CAN' || S.btf.tab === 'KH') {
+    const ST = khStatuses();
+    const rows = [csvHead(KH_CSV)].concat(khFiltered(ST, S.btf.tab === 'CAN').map(k => {
+      const tb = tbById(k.IDThietBi), s = ST.get(k.MaKH);
+      return KH_CSV.map(([f]) => {
+        if (f === '_TenMay') return tb ? tb.TenMay : '';
+        if (f === '_KhuVuc') return tb ? dmVi('KHUVUC', tb.ViTri) : '';
+        if (f === '_ChuKy') return cycleTr(k).vi;
+        if (f === 'CachTinhHan') return tr(k.CachTinhHan === 'LICH' ? 'khModeLICH' : 'khModeTHUCTE').vi;
+        if (f === '_Han') return s.due || '';
+        if (f === '_TrangThai') return tr('kh' + s.st).vi;
+        if (f === '_SoMuc') return hmOf(k.MaKH).length;
+        if (f === 'CanDungMay' || f === 'DangDung') return isOn(k[f]) ? 'Có' : 'Không';
+        return k[f] || '';
+      });
+    }));
+    downloadCsv(`ke-hoach-bao-tri_${stamp}.csv`, rows);
+    return;
+  }
+  const rows = [csvHead(BT_CSV)].concat(btFiltered(S.btf.tab).map(x => {
+    const tb = tbById(x.IDThietBi);
+    return BT_CSV.map(([f]) => {
+      if (f === '_TenMay') return tb ? tb.TenMay : '';
+      if (f === '_KhuVuc') return tb ? dmVi('KHUVUC', tb.ViTri) : '';
+      if (f === 'TrangThaiPhieu') return tr('bt' + x.TrangThaiPhieu).vi;
+      if (f === 'MayDung') return isOn(x.MayDung) ? 'Có' : 'Không';
+      return x[f] || '';
+    });
+  }));
+  downloadCsv(`phieu-bao-tri_${stamp}.csv`, rows);
+}
+
+/* ---- Lịch 12 tháng (kế hoạch bảo trì năm) ---- */
+/** Các lần đến hạn dự kiến của kế hoạch trong năm y (từ hạn hiệu lực). late = đang quá hạn. */
+function khOccurrences(kh, s, y, today) {
+  const out = [];
+  if (!s.due || s.st === 'NGUNG' || s.st === 'MAYNGUNG') return out;
+  const n = khN(kh), u = khUnit(kh);
+  const yEnd = y + '-12-31', yStart = y + '-01-01';
+  const push = (d, late) => { if (d >= yStart && d <= yEnd) out.push({ d, late }); };
+  if (s.due < today) {
+    push(s.due, true);
+    // quá hạn: LICH giữ nhịp theo hạn cũ; THUCTE tính lại từ hôm nay (coi như làm hôm nay)
+    const base = kh.CachTinhHan === 'LICH' ? s.due : today;
+    for (let k = 1; k < 800; k++) {
+      const d = dAdd(base, n * k, u);
+      if (d > yEnd) break;
+      if (d > today) push(d, false);
+    }
+  } else {
+    push(s.due, false);
+    for (let k = 1; k < 800; k++) {
+      const d = dAdd(s.due, n * k, u);
+      if (d > yEnd) break;
+      push(d, false);
+    }
+  }
+  return out;
+}
+
+function btYearRows(y) {
+  const map = {};
+  (S.btYear[y] || []).forEach(x => { map[x.SoPhieu] = x; });
+  allBT().forEach(x => { if (String(x.TGKetThuc).slice(0, 4) === String(y)) map[x.SoPhieu] = x; });
+  return Object.values(map);
+}
+
+function yearGrid(y) {
+  const ST = khStatuses();
+  const today = dToday();
+  const done = {};
+  btYearRows(y).forEach(x => {
+    const m = Number(String(x.TGKetThuc).slice(5, 7));
+    const o = done[x.MaKH] || (done[x.MaKH] = {});
+    const c = o[m] || (o[m] = { done: 0, pend: 0 });
+    if (x.TrangThaiPhieu === 'DONG') c.done++; else if (BT_CHO.includes(x.TrangThaiPhieu)) c.pend++;
+  });
+  const f = S.btNam;
+  const n = norm(f.q);
+  const plans = allKH().filter(k => {
+    const s = ST.get(k.MaKH);
+    if ((s.st === 'NGUNG' || s.st === 'MAYNGUNG') && !done[k.MaKH]) return false;
+    const tb = s.tb;
+    if (f.kv && (!tb || tb.ViTri !== f.kv)) return false;
+    if (f.nhom && (!tb || tb.NhomTB !== f.nhom)) return false;
+    if (n && !norm([k.IDThietBi, k.MaKH, k.TenVI, k.TenZH, tb && tb.TenMay, tb && tb.MaNhaMay].join(' ')).includes(n)) return false;
+    return true;
+  }).sort((a, b) => String(a.IDThietBi).localeCompare(String(b.IDThietBi), 'en', { numeric: true }) || String(a.TenVI).localeCompare(String(b.TenVI), 'vi'));
+  return plans.map(k => {
+    const s = ST.get(k.MaKH);
+    const cells = [];
+    for (let m = 1; m <= 12; m++) cells.push(Object.assign({ done: 0, pend: 0, plan: 0, late: 0 }, (done[k.MaKH] || {})[m] || {}));
+    khOccurrences(k, s, y, today).forEach(o => { const c = cells[Number(o.d.slice(5, 7)) - 1]; if (o.late) c.late++; else c.plan++; });
+    return { kh: k, s, cells };
+  });
+}
+
+function yearCellCls(c) {
+  if (c.late) return 'late';
+  if (c.pend) return 'pend';
+  if (c.done && c.plan) return 'part';
+  if (c.done) return 'done';
+  if (c.plan) return 'plan';
+  return '';
+}
+
+VIEWS['bt-nam'] = () => {
+  if (!S.data) return loadingView();
+  const f = S.btNam;
+  if (!f.y) f.y = new Date().getFullYear();
+  return {
+    live: true, title: 'btYearPlan', back: 'bt', tab: 'cv',
+    html: `
+      <div class="toolbar sticky">
+        <div class="yr-nav">
+          <button class="hbtn" data-act="btYear" data-d="-1" aria-label="-1">${ic('back')}</button>
+          <b class="yr-y">${f.y}</b>
+          <button class="hbtn" data-act="btYear" data-d="1" aria-label="+1">${ic('chev')}</button>
+          <span class="sp"></span>
+          <span id="yr-load" class="muted small"></span>
+          <button class="btn sm" data-act="btNamCsv">${ic('download')}${t('exportCsv')}</button>
+        </div>
+        <div class="search">${ic('search')}<input type="search" id="yr-q" value="${esc(f.q)}" placeholder="${esc(tp('btSearch'))}" autocomplete="off"></div>
+        <div class="chips">
+          <button class="chip${f.kv ? ' on' : ''}" data-act="btNamFilter" data-k="kv">${ic('map')}${f.kv ? dmBi('KHUVUC', f.kv) : t('allAreas')}</button>
+          <button class="chip${f.nhom ? ' on' : ''}" data-act="btNamFilter" data-k="nhom">${ic('device')}${f.nhom ? dmBi('NHOMTB', f.nhom) : t('allGroups')}</button>
+        </div>
+      </div>
+      <div class="yr-legend">
+        <span><i class="yc c-done">${ic('check')}</i>${t('yrDone')}</span>
+        <span><i class="yc c-pend">${ic('clock')}</i>${t('btCHODUYET')}</span>
+        <span><i class="yc c-plan"></i>${t('yrPlan')}</span>
+        <span><i class="yc c-late">!</i>${t('khQUAHAN')}</span>
+      </div>
+      <div id="yr-box"></div>
+      <p class="muted small">${t('yrHint')}</p>`,
+    after: () => {
+      drawYear();
+      $('#yr-q').addEventListener('input', debounce(e => { S.btNam.q = e.target.value; drawYear(); }, 150));
+      if (!(f.y in S.btYear) && S.online) loadBtYear(f.y);
+    }
+  };
+};
+
+function drawYear() {
+  const box = $('#yr-box');
+  if (!box) return;
+  const y = S.btNam.y;
+  const rows = yearGrid(y);
+  const now = new Date();
+  const curM = now.getFullYear() === y ? now.getMonth() + 1 : 0;
+  const ld = $('#yr-load');
+  if (ld) ld.innerHTML = S.btYearBusy ? `<span class="spinner inline"></span>` : '';
+  if (!rows.length) { box.innerHTML = `<div class="empty">${ic('grid')}${allKH().length ? t('noResult') : t('khNone')}</div>`; return; }
+  const mh = m => bi('T' + m, m + '月');
+  box.innerHTML = `<div class="yr-wrap"><table class="yr">
+    <thead><tr><th class="yr-h">${t('yrPlanCol')}</th>${Array.from({ length: 12 }, (_, i) => `<th class="${i + 1 === curM ? 'now' : ''}">${mh(i + 1)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => {
+      const href = `#/kh/${encodeURIComponent(r.kh.MaKH)}`;
+      const tb = r.s.tb;
+      return `<tr><th class="yr-h"><a href="${href}"><span class="yr-tb"><span class="tb-id">${esc(r.kh.IDThietBi)}</span> ${esc(tb ? tb.TenMay : '')}</span>
+          <span class="yr-kh">${esc(r.kh.TenVI)}</span><span class="yr-cyc">${esc(cycleTr(r.kh).vi)}</span></a></th>
+        ${r.cells.map((c, i) => {
+          const cls = yearCellCls(c);
+          const tot = c.done + c.pend + c.plan + c.late;
+          const inner = !cls ? '' : (tot > 1 ? String(tot) : (cls === 'done' || cls === 'part' ? ic('check') : (cls === 'pend' ? ic('clock') : (cls === 'late' ? '!' : ''))));
+          const tip = [c.done && `✓${c.done}`, c.pend && `◐${c.pend}`, c.plan && `○${c.plan}`, c.late && `!${c.late}`].filter(Boolean).join(' ');
+          return `<td class="${i + 1 === curM ? 'now' : ''}">${cls ? `<a class="yc c-${cls}" href="${href}" title="${esc(tip)}">${inner}</a>` : ''}</td>`;
+        }).join('')}</tr>`;
+    }).join('')}</tbody></table></div>`;
+  // Cuộn ngang tới tháng hiện tại (để lại 1 tháng trước) cho khỏi phải vuốt tìm
+  const wrap = $('.yr-wrap', box), th = curM ? $('thead th.now', box) : null, h = $('thead th.yr-h', box);
+  if (wrap && th && h) wrap.scrollLeft = Math.max(0, th.offsetLeft - h.offsetWidth - th.offsetWidth);
+}
+
+async function loadBtYear(y) {
+  if (S.btYearBusy) return;
+  S.btYearBusy = true;
+  drawYearLoading();
+  try {
+    const r = await api('listBT', { year: y });
+    S.btYear[y] = r.rows;
+  } catch (e) {
+    if (e.code !== 'AUTH') toast(errText(e), 'err');
+  }
+  S.btYearBusy = false;
+  if (S.cur && S.cur.name === 'bt-nam') drawYear();
+}
+function drawYearLoading() { const ld = $('#yr-load'); if (ld) ld.innerHTML = `<span class="spinner inline"></span>`; }
+
+function exportYearCsv() {
+  const y = S.btNam.y;
+  const head = ['ID', 'Tên máy / 设备名称', 'Mã kế hoạch / 计划编号', 'Công việc / 保养内容', 'Chu kỳ / 周期']
+    .concat(Array.from({ length: 12 }, (_, i) => `T${i + 1} / ${i + 1}月`));
+  const rows = [head].concat(yearGrid(y).map(r => [r.kh.IDThietBi, r.s.tb ? r.s.tb.TenMay : '', r.kh.MaKH, r.kh.TenVI, cycleTr(r.kh).vi]
+    .concat(r.cells.map(c => [c.done && `✓${c.done > 1 ? c.done : ''}`, c.pend && `◐${c.pend > 1 ? c.pend : ''}`,
+      c.plan && `○${c.plan > 1 ? c.plan : ''}`, c.late && '!'].filter(Boolean).join(' ')))));
+  rows.push([]);
+  rows.push(['✓ = Đã làm / 已完成', '◐ = Chờ duyệt / 待审核', '○ = Kế hoạch / 计划', '! = Quá hạn / 逾期']);
+  downloadCsv(`lich-bao-tri-${y}.csv`, rows);
+}
+
+/* ---- Chi tiết kế hoạch ---- */
+VIEWS.kh = p => {
+  if (p[1] && p[2] === 'sua') return viewKhForm(p[1], null);
+  if (p[1]) return viewKhDetail(p[1]);
+  location.replace('#/bt');
+  return loadingView();
+};
+VIEWS['kh-moi'] = p => viewKhForm(null, p[1]);
+
+function ckRo(it, i) {
+  const range = rangeText(it);
+  return `<div class="mau-ro">
+    <span class="mau-no">${i + 1}</span>
+    <div class="grow">${bi(it.HangMucVI, it.HangMucZH)}</div>
+    <span class="mau-kind">${it.KieuNhap === 'SO' ? bi(tr('kindNum').vi + (it.DonVi ? ' (' + it.DonVi + ')' : ''), tr('kindNum').zh) + (range ? `<span class="small muted">${esc(range)}</span>` : '') : t('kindPass')}</span>
+  </div>`;
+}
+
+function viewKhDetail(ma) {
+  if (!S.data) return loadingView();
+  const kh = khByMa(ma);
+  if (!kh) return { title: 'khDetail', back: 'bt', tab: 'cv', html: `<div class="empty">${ic('search')}${t('khNotFound', ma)}</div>` };
+  const s = khStatus(kh);
+  const tb = s.tb;
+  const items = hmOf(kh.MaKH);
+  const hist = btOfKh(kh.MaKH);
+  const pend = hist.filter(x => BT_CHO.includes(x.TrangThaiPhieu));
+  const ql = isQL();
+  const enc = encodeURIComponent(kh.MaKH);
+  const canRecord = isOn(kh.DangDung) && tb && tb.TrangThai !== 'THANHLY' && items.length;
+  const last = kh.PhieuCuoi ? btBySo(kh.PhieuCuoi) : null;
+  const loading = S.online && !S.btKhLoaded.has(kh.MaKH);
+  const kv = (key, val, raw) => (val === '' || val === null || val === undefined) ? '' :
+    `<div class="kv"><div class="k">${t(key)}</div><div class="v">${raw ? val : esc(val)}</div></div>`;
+  const x = dueTr(s);
+  return {
+    live: true, title: 'khDetail', back: 'bt', tab: 'cv',
+    html: `
+      <section class="card hero kh-${esc(s.st)}">
+        <div class="hero-main">
+          <div class="hero-ids"><span class="sc-no big">${esc(kh.MaKH)}</span>${khPill(s.st)}</div>
+          ${bi(kh.TenVI, kh.TenZH, 'hero-name')}
+          ${s.due ? `<div class="due-big kh-${esc(s.st)}">${ic('calendar')}${bi(`${x.vi} · ${fmtDate(s.due)}`, x.zh)}</div>` : ''}
+          ${cycHtml(kh)}
+        </div>
+      </section>
+      ${pend.map(b => `<a class="notice sc-open bt-${esc(b.TrangThaiPhieu)}" href="#/bt/${encodeURIComponent(b.SoPhieu)}">${ic('checklist')}
+        <div>${t('btPendOnKh', b.SoPhieu)}<div class="small muted">${esc(fmtShort(b.TGKetThuc))} · ${esc(b.NguoiThucHien)}</div></div>${btPill(b.TrangThaiPhieu)}</a>`).join('')}
+      ${!isOn(kh.DangDung) ? `<div class="notice warn">${ic('ban')}<div>${t('khStoppedNote')}</div></div>` : ''}
+      ${isOn(kh.DangDung) && tb && MAY_NGUNG.includes(tb.TrangThai) ? `<div class="notice warn">${ic('info')}<div>${t('khMachineStopped')}</div></div>` : ''}
+      ${isOn(kh.DangDung) && !items.length ? `<div class="notice warn">${ic('alert')}<div>${t('khNoItems')}</div></div>` : ''}
+      ${tbCard(kh.IDThietBi)}
+      ${canRecord ? `<a class="btn primary block" href="#/bt-moi/${enc}">${ic('checklist')}${t('btRecord')}</a>` : ''}
+      ${ql ? `<div class="actions-row">
+        <a class="btn sm" href="#/kh/${enc}/sua">${ic('edit')}${t('edit')}</a>
+        <button class="btn sm" data-act="khDoiHan" data-ma="${esc(kh.MaKH)}">${ic('forward')}${t('khReschedule')}</button>
+      </div>` : ''}
+      <section class="card">
+        <div class="card-h">${ic('info')}${t('info')}</div>
+        ${kv('khCycle', bi(cycleTr(kh).vi, cycleTr(kh).zh), true)}
+        ${kv('khDueMode', t(kh.CachTinhHan === 'LICH' ? 'khModeLICH' : 'khModeTHUCTE'), true)}
+        ${kv('khNextDue', fmtDate(kh.HanTiepTheo))}
+        ${kv('khLast', kh.LanCuoi ? `${esc(fmtDate(kh.LanCuoi))}${kh.PhieuCuoi ? ` · <a class="link" href="#/bt/${encodeURIComponent(kh.PhieuCuoi)}">${esc(kh.PhieuCuoi)}</a>` : ''}` : `<span class="muted">${t('khNever')}</span>`, true)}
+        ${kv('scNhaThau', kh.NhaThau ? esc(kh.NhaThau) : `<span class="muted">${t('khInHouse')}</span>`, true)}
+        ${kv('khNeedStop', isOn(kh.CanDungMay) ? `<span class="tag warn">${t('yes')}</span>` : `<span class="tag">${t('no')}</span>`, true)}
+        ${kh.LyDoDoiHan ? kv('khLastResched', kh.LyDoDoiHan) : ''}
+        ${kh.HuongDan ? `<div class="kv col"><div class="k">${t('khGuide')}</div><div class="v pre">${esc(kh.HuongDan)}</div></div>` : ''}
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('checklist')}${t('khChecklist')}<span class="count">${items.length}</span></div>
+        ${items.map(ckRo).join('') || `<div class="empty small">${t('noCheckItems')}</div>`}
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('log')}${t('btHistory')}<span class="count">${hist.length}</span></div>
+        ${hist.length ? `<div class="mini-list">${hist.slice(0, 50).map(b => btMini(b, false)).join('')}</div>` : ''}
+        ${loading ? `<div class="empty small"><div class="spinner"></div></div>` : (hist.length ? '' : `<div class="empty small">${t('btNoHistory')}</div>`)}
+      </section>
+      <p class="muted small audit">${t('createdBy', fmtTime(kh.NgayTao), kh.NguoiTao || '—')}<br>${t('updatedBy', fmtTime(kh.NgaySua), kh.NguoiSua || '—')}</p>`,
+    after: () => loadKhHistory(kh.MaKH)
+  };
+}
+
+async function loadKhHistory(ma) {
+  if (!S.online || S.btKhLoaded.has(ma)) return;
+  S.btKhLoaded.add(ma);
+  try { const r = await api('listBT', { kh: ma }); mergeBT(r.rows); } catch (e) { /* giữ dữ liệu đã có */ }
+  const p = route();
+  if (p[0] === 'kh' && p[1] && p[1].toUpperCase() === String(ma).toUpperCase() && !p[2] && !$('.overlay.open')) {
+    const y = window.scrollY; render(true); window.scrollTo(0, y);
+  }
+}
+
+function khDoiHanSheet(ma) {
+  const kh = khByMa(ma);
+  if (!kh || !needOnline()) return;
+  const sh = openSheet(`
+    <form id="f-dh" class="form" autocomplete="off" novalidate>
+      <div class="pk-head"><h3 class="h3">${t('khReschedule')}</h3><button type="button" class="hbtn" data-act="closeSheet">${ic('x')}</button></div>
+      <div class="muted small"><span class="sc-no">${esc(kh.MaKH)}</span> · ${esc(kh.IDThietBi)} · ${esc(kh.TenVI)}</div>
+      <div class="kv"><div class="k">${t('khNextDue')}</div><div class="v">${esc(fmtDate(kh.HanTiepTheo))}</div></div>
+      <label class="fld" data-fld="han"><span class="lb">${t('khNewDue')} <b class="req">*</b></span><input type="date" name="han" value="${esc(kh.HanTiepTheo)}"><span class="fe"></span></label>
+      <label class="fld" data-fld="lyDo"><span class="lb">${t('khReschedReason')} <b class="req">*</b></span>
+        <textarea name="lyDo" rows="3" maxlength="500" placeholder="${esc(tp('khReschedPh'))}"></textarea><span class="fe"></span></label>
+      <div class="msg" id="dh-msg"></div>
+      <button class="btn primary block" type="submit">${ic('forward')}${t('khReschedule')}</button>
+    </form>`);
+  const form = $('#f-dh', sh);
+  form.addEventListener('input', clearFieldErr);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (!needOnline()) return;
+    const han = form.han.value, lyDo = form.lyDo.value.trim();
+    let bad = false;
+    if (!han) { scFieldErr(form, 'han', 'eRequired'); bad = true; }
+    if (!lyDo) { scFieldErr(form, 'lyDo', 'eRequired'); bad = true; }
+    if (bad) return;
+    busy(form, true);
+    try {
+      const r = await api('doiHanKH', { ma: kh.MaKH, han, lyDo, ngaySuaCu: kh.NgaySua || '' });
+      upsertKH(r.kh);
+      closeSheet();
+      toast('khReschedDone', 'ok');
+      render(true);
+    } catch (e) {
+      if (e.code === 'INVALID' && e.extra && e.extra.errors) e.extra.errors.forEach(x => scFieldErr(form, x.field, reasonKey(x.reason)));
+      else if (e.code === 'CONFLICT') { closeSheet(); await khConflict(e); }
+      else if (e.code !== 'AUTH') $('#dh-msg').innerHTML = errHtml(e);
+    } finally { if (form.isConnected) busy(form, false); }
+  });
+}
+
+async function khConflict(e) {
+  const ex = e.extra || {};
+  if (await confirmDlg('eConflict', tr('scConflictMsg', [ex.nguoiSua || '?', fmtTime(ex.ngaySua)]), { ok: 'reload' })) {
+    S.khForm = null;
+    await refresh(true);
+    render();
+  }
+}
+
+/* ---- Biểu mẫu kế hoạch (quản lý) ---- */
+function viewKhForm(ma, preId) {
+  if (!isQL()) return forbiddenView('bt');
+  if (!S.data) return loadingView();
+  const cur = ma ? khByMa(ma) : null;
+  if (ma && !cur) return { title: 'khDetail', back: 'bt', tab: 'cv', html: `<div class="empty">${t('khNotFound', ma)}</div>` };
+  const key = ma ? 'edit:' + cur.MaKH : 'new:' + (preId || '');
+  if (!S.khForm || S.khForm.key !== key) {
+    const pre = preId ? tbById(preId) : null;
+    S.khForm = {
+      key, orig: cur ? cur.NgaySua : undefined,
+      kh: cur ? Object.assign({}, cur) : { TenVI: '', TenZH: '', ChuKySo: '1', ChuKyDonVi: 'THANG', CachTinhHan: 'THUCTE',
+        HanTiepTheo: dToday(), CanDungMay: '0', NhaThau: '', HuongDan: '', DangDung: '1' },
+      ids: new Set(cur ? [cur.IDThietBi] : (pre && pre.TrangThai !== 'THANHLY' ? [pre.ID] : [])),
+      items: cur ? hmOf(cur.MaKH).map(x => Object.assign({}, x)) : [],
+      apDung: false
+    };
+  }
+  const F = S.khForm;
+  const K = F.kh;
+  const others = khSameName(cur);
+  const back = cur ? 'kh/' + encodeURIComponent(cur.MaKH) : (preId ? 'tb/' + encodeURIComponent(preId) : 'bt');
+  const txt = (f, key, req, attrs, ph) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)}${req ? ' <b class="req">*</b>' : ''}</span>
+    <input data-kf="${f}" value="${esc(K[f] || '')}" ${attrs || ''} ${ph ? `placeholder="${esc(tp(ph))}"` : ''}><span class="fe"></span></label>`;
+  const names = [...new Set(allKH().map(k => k.TenVI).filter(Boolean))].slice(0, 60);
+  return {
+    title: cur ? 'khEditTitle' : 'khNewTitle', back, tab: 'cv', noPtr: true,
+    html: `
+      <form id="f-kh" class="form" autocomplete="off" novalidate>
+        ${cur ? `<div class="card pad slim"><span class="sc-no big">${esc(cur.MaKH)}</span></div>` : ''}
+        <section class="card pad">
+          <div class="card-h flat">${ic('device')}${t('scMay')}</div>
+          ${cur ? `<div class="static">${tbLine(cur.IDThietBi)}</div>`
+            : `<div class="fld" data-fld="ids"><button type="button" class="select" data-act="khPickTb">${khTbLabel()}${ic('down')}</button><span class="fe"></span></div>
+               <div id="kh-tbs" class="kh-tbs">${khTbChips()}</div>
+               <p class="muted small">${t('khMultiHint')}</p>`}
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('wrench')}${t('khWork')}</div>
+          ${txt('TenVI', 'khTenVI', true, 'maxlength="200" list="dl-khn"', 'khTenPh')}
+          ${txt('TenZH', 'khTenZH', false, 'maxlength="200" lang="zh"')}
+          <div class="fld" data-fld="ChuKySo"><span class="lb">${t('khCycle')} <b class="req">*</b></span>
+            <div class="cyc-row">
+              <input data-kf="ChuKySo" value="${esc(K.ChuKySo)}" inputmode="numeric" maxlength="3" class="cyc-n">
+              <div class="seg grow">${BT_UNITS.map(u => `<label><input type="radio" name="kh-u" value="${u}" data-kr="ChuKyDonVi" ${K.ChuKyDonVi === u ? 'checked' : ''}><span>${t('unit' + u)}</span></label>`).join('')}</div>
+            </div>
+            <span class="fe"></span>
+            <span class="muted small" id="kh-cyc">${biTr(cycleTr(K))}</span>
+          </div>
+          <div class="fld" data-fld="CachTinhHan"><span class="lb">${t('khDueMode')}</span>
+            <div class="seg">${['THUCTE', 'LICH'].map(m => `<label><input type="radio" name="kh-m" value="${m}" data-kr="CachTinhHan" ${K.CachTinhHan === m ? 'checked' : ''}><span>${t('khMode' + m)}</span></label>`).join('')}</div>
+            <span class="muted small" id="kh-mode-hint">${t(K.CachTinhHan === 'LICH' ? 'khModeLICHHint' : 'khModeTHUCTEHint')}</span>
+          </div>
+          <label class="fld" data-fld="HanTiepTheo"><span class="lb">${t(cur ? 'khNextDue' : 'khFirstDue')} <b class="req">*</b></span>
+            <input type="date" data-kf="HanTiepTheo" value="${esc(K.HanTiepTheo)}"><span class="fe"></span></label>
+        </section>
+        <section class="card pad">
+          <label class="switch"><input type="checkbox" data-kc="CanDungMay" ${isOn(K.CanDungMay) ? 'checked' : ''}><span class="sw"></span>${t('khNeedStopQ')}</label>
+          ${txt('NhaThau', 'scNhaThau', false, 'maxlength="150" list="dl-nt"', 'scNhaThauPh')}
+          <label class="fld" data-fld="HuongDan"><span class="lb">${t('khGuide')}</span>
+            <textarea data-kf="HuongDan" rows="3" maxlength="2000" placeholder="${esc(tp('khGuidePh'))}">${esc(K.HuongDan || '')}</textarea><span class="fe"></span></label>
+          ${cur ? `<label class="switch"><input type="checkbox" data-kc="DangDung" ${isOn(K.DangDung) ? 'checked' : ''}><span class="sw"></span>${t('khActive')}</label>
+            <p class="muted small">${t('khActiveHint')}</p>` : ''}
+        </section>
+        <section class="card pad">
+          <div class="card-h flat" data-fld="items">${ic('checklist')}${t('khChecklist')}</div>
+          <div class="ck-bar"><span class="muted small">${t('khCopyHint')}</span>
+            <button type="button" class="btn sm" data-act="khCopyCk">${ic('download')}${t('khCopyFrom')}</button></div>
+          <div id="kh-ck">${drawKhCk()}</div>
+          <button type="button" class="btn block" data-act="khCkAdd">${ic('plus')}${t('addCheckItem')}</button>
+          ${cur ? `<p class="muted small">${t('khCkSnapHint')}</p>` : ''}
+          ${others.length ? `<label class="switch"><input type="checkbox" id="kh-ap" ${F.apDung ? 'checked' : ''}><span class="sw"></span>${t('khApplySame', others.length)}</label>` : ''}
+        </section>
+        ${datalist('dl-khn', names)}${datalist('dl-nt', uniqueRecent('NhaThau', allKH().map(k => k.NhaThau)))}
+        <div class="form-actions">
+          <a class="btn" href="#/${back}">${t('cancel')}</a>
+          <button class="btn primary" type="submit">${ic('check')}${t('save')}</button>
+        </div>
+      </form>`,
+    after: () => {
+      const form = $('#f-kh');
+      form.addEventListener('submit', saveKhForm);
+      form.addEventListener('input', e => {
+        clearFieldErr(e);
+        const el = e.target;
+        if (el.dataset.kf) {
+          K[el.dataset.kf] = el.value;
+          if (el.dataset.kf === 'ChuKySo') $('#kh-cyc').innerHTML = biTr(cycleTr(K));
+        }
+        if (el.dataset.hf) {
+          const it = F.items[Number(el.dataset.i)];
+          if (it) it[el.dataset.hf] = el.value;
+        }
+      });
+      form.addEventListener('change', e => {
+        const el = e.target;
+        if (el.dataset.kr) {
+          K[el.dataset.kr] = el.value;
+          $('#kh-cyc').innerHTML = biTr(cycleTr(K));
+          $('#kh-mode-hint').innerHTML = t(K.CachTinhHan === 'LICH' ? 'khModeLICHHint' : 'khModeTHUCTEHint');
+        }
+        if (el.dataset.kc) K[el.dataset.kc] = el.checked ? '1' : '0';
+        if (el.id === 'kh-ap') F.apDung = el.checked;
+        if (el.dataset.hkind !== undefined) {
+          const it = F.items[Number(el.dataset.i)];
+          if (it) { it.KieuNhap = el.value; $('#kh-ck').innerHTML = drawKhCk(); }
+        }
+      });
+    }
+  };
+}
+
+function biTr(x) { return bi(x.vi, x.zh); }
+function khSameName(cur) {
+  if (!cur) return [];
+  const n = norm(cur.TenVI);
+  return allKH().filter(k => k.MaKH !== cur.MaKH && norm(k.TenVI) === n);
+}
+function khTbLabel() {
+  const n = S.khForm ? S.khForm.ids.size : 0;
+  return n ? `<span class="grow">${t('nSelected', n)}</span>` : `<span class="muted">${t('khChooseTb')}</span>`;
+}
+function khTbChips() {
+  const ids = S.khForm ? [...S.khForm.ids] : [];
+  return ids.sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).map(id => {
+    const tb = tbById(id);
+    return `<div class="kh-tb"><span class="tb-id">${esc(id)}</span><span class="grow small">${esc(tb ? tb.TenMay : '')}</span>
+      <button type="button" class="hbtn sm" data-act="khTbRemove" data-id="${esc(id)}" aria-label="x">${ic('x')}</button></div>`;
+  }).join('');
+}
+function drawKhCk() {
+  const items = S.khForm.items;
+  if (!items.length) return `<div class="empty small">${t('noCheckItems')}</div>`;
+  return items.map((it, i) => `
+    <div class="card pad mau-item" data-fld="hm${i}">
+      <div class="mau-head">
+        <span class="mau-no">${i + 1}</span>
+        <span class="sp"></span>
+        <button type="button" class="hbtn sm" data-act="khCkMove" data-i="${i}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="up">${ic('up')}</button>
+        <button type="button" class="hbtn sm" data-act="khCkMove" data-i="${i}" data-d="1" ${i === items.length - 1 ? 'disabled' : ''} aria-label="down">${ic('down')}</button>
+        <button type="button" class="hbtn sm danger" data-act="khCkDel" data-i="${i}" aria-label="delete">${ic('trash')}</button>
+      </div>
+      <label class="fld"><span class="lb">${t('itemVI')} <b class="req">*</b></span><input data-hf="HangMucVI" data-i="${i}" value="${esc(it.HangMucVI)}" maxlength="200"></label>
+      <label class="fld"><span class="lb">${t('itemZH')}</span><input data-hf="HangMucZH" data-i="${i}" value="${esc(it.HangMucZH)}" maxlength="200" lang="zh"></label>
+      <div class="seg">
+        <label><input type="radio" name="hk${i}" value="DAT" data-hkind data-i="${i}" ${it.KieuNhap !== 'SO' ? 'checked' : ''}><span>${t('kindPass')}</span></label>
+        <label><input type="radio" name="hk${i}" value="SO" data-hkind data-i="${i}" ${it.KieuNhap === 'SO' ? 'checked' : ''}><span>${t('kindNum')}</span></label>
+      </div>
+      ${it.KieuNhap === 'SO' ? `<div class="grid3">
+        <label class="fld"><span class="lb">${t('unit')}</span><input data-hf="DonVi" data-i="${i}" value="${esc(it.DonVi)}" maxlength="20"></label>
+        <label class="fld"><span class="lb">${t('min')}</span><input data-hf="Min" data-i="${i}" value="${esc(it.Min)}" inputmode="decimal" maxlength="12"></label>
+        <label class="fld"><span class="lb">${t('max')}</span><input data-hf="Max" data-i="${i}" value="${esc(it.Max)}" inputmode="decimal" maxlength="12"></label>
+      </div>` : ''}
+    </div>`).join('');
+}
+
+/** Chọn nhiều máy (hộp thoại có ô đánh dấu) → Promise<Set | undefined> */
+function pickMany(opts) {
+  return new Promise(res => {
+    const sel = new Set(opts.selected || []);
+    const T1 = tr(opts.title);
+    const sh = openSheet(`
+      <div class="pk-head"><h3 class="h3">${bi(T1.vi, T1.zh)}</h3><button type="button" class="hbtn" data-act="closeSheet">${ic('x')}</button></div>
+      <div class="search sm">${ic('search')}<input type="search" id="pm-q" placeholder="${esc(tp('searchTb'))}" autocomplete="off"></div>
+      <div class="row gap wrap">
+        <button type="button" class="btn sm" id="pm-all">${ic('check')}${t('selectAllShown')}</button>
+        <button type="button" class="btn sm" id="pm-none">${ic('x')}${t('clearSelection')}</button>
+      </div>
+      <div class="tem-list" id="pm-list"></div>
+      <button type="button" class="btn primary block" id="pm-ok"></button>`, { onClose: v => res(v) });
+    const shown = () => {
+      const n = norm($('#pm-q', sh).value);
+      return opts.items.filter(it => !n || norm(it.v + ' ' + it.vi + ' ' + it.zh + ' ' + (it.sub || '')).includes(n));
+    };
+    const draw = () => {
+      const list = shown();
+      $('#pm-list', sh).innerHTML = list.length ? list.map(it => `
+        <label class="tem-row"><input type="checkbox" data-v="${esc(it.v)}" ${sel.has(it.v) ? 'checked' : ''}>
+          <span class="tb-id">${esc(it.v)}</span><span class="grow">${bi(it.vi, it.zh)}${it.sub ? `<span class="pk-sub">${esc(it.sub)}</span>` : ''}</span></label>`).join('')
+        : `<div class="empty small">${t('noResult')}</div>`;
+      count();
+    };
+    const count = () => { $('#pm-ok', sh).innerHTML = `${ic('check')}${t('pmDoneN', sel.size)}`; };
+    $('#pm-q', sh).addEventListener('input', draw);
+    $('#pm-list', sh).addEventListener('change', e => {
+      const cb = e.target.closest('input[data-v]');
+      if (!cb) return;
+      if (cb.checked) sel.add(cb.dataset.v); else sel.delete(cb.dataset.v);
+      count();
+    });
+    $('#pm-all', sh).addEventListener('click', () => { shown().forEach(it => sel.add(it.v)); draw(); });
+    $('#pm-none', sh).addEventListener('click', () => { sel.clear(); draw(); });
+    $('#pm-ok', sh).addEventListener('click', () => closeSheet(sel));
+    draw();
+  });
+}
+
+function khCkNumOk(v) { const s = String(v || '').trim().replace(',', '.'); return !s || /^-?\d+(\.\d+)?$/.test(s); }
+
+async function saveKhForm(ev) {
+  ev.preventDefault();
+  if (!needOnline()) return;
+  const form = ev.target;
+  const F = S.khForm;
+  const K = F.kh;
+  const cur = K.MaKH ? khByMa(K.MaKH) : null;
+  $$('.has-err', form).forEach(el => { el.classList.remove('has-err'); const fe = $('.fe', el); if (fe) fe.innerHTML = ''; });
+  let bad = false;
+  const err = (f, k) => { scFieldErr(form, f, k); bad = true; };
+  if (!cur && !F.ids.size) err('ids', 'eRequired');
+  if (!String(K.TenVI || '').trim()) err('TenVI', 'eRequired');
+  if (!/^\d{1,3}$/.test(String(K.ChuKySo).trim()) || Number(K.ChuKySo) < 1) err('ChuKySo', 'eNumber');
+  if (!K.HanTiepTheo) err('HanTiepTheo', 'eRequired');
+  let itemErr = null;
+  if (!F.items.length) itemErr = tr('khNeedItems');
+  F.items.forEach((it, i) => {
+    if (itemErr) return;
+    if (!String(it.HangMucVI || '').trim()) itemErr = tr('eItemReq', [i + 1]);
+    else if (it.KieuNhap === 'SO' && (!khCkNumOk(it.Min) || !khCkNumOk(it.Max))) itemErr = tr('eItemNum', [i + 1]);
+    else if (it.KieuNhap === 'SO' && String(it.Min).trim() && String(it.Max).trim() &&
+      Number(String(it.Min).replace(',', '.')) > Number(String(it.Max).replace(',', '.'))) itemErr = tr('eItemMinMax', [i + 1]);
+  });
+  if (itemErr) { toast(itemErr, 'err'); bad = true; }
+  if (bad) { const first = $('.has-err', form); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' }); if (!itemErr) toast('eInvalid', 'err'); return; }
+  const payload = {
+    kh: Object.assign({}, K, { MaKH: cur ? cur.MaKH : '' }),
+    items: F.items.map(it => ({ HangMucVI: it.HangMucVI, HangMucZH: it.HangMucZH, KieuNhap: it.KieuNhap === 'SO' ? 'SO' : 'DAT',
+      DonVi: it.DonVi || '', Min: it.Min || '', Max: it.Max || '' }))
+  };
+  if (cur) {
+    payload.ngaySuaCu = F.orig || '';
+    if (F.apDung) payload.apDung = khSameName(cur).map(k => k.MaKH);
+  } else {
+    payload.ids = [...F.ids];
+  }
+  busy(form, true);
+  try {
+    const r = await api('saveKeHoach', payload);
+    S.data.keHoachBT = r.keHoachBT;
+    S.data.hangMucBT = r.hangMucBT;
+    saveCache();
+    S.khForm = null;
+    if (cur) {
+      toast(r.unchanged ? 'scNoChange' : 'saved', 'ok');
+      const detail = '#/kh/' + encodeURIComponent(cur.MaKH);
+      if (S.prevHash === detail) history.back(); else location.replace(detail);
+    } else {
+      toast(tr('khCreated', [r.created.length]), 'ok');
+      if (r.created.length === 1) location.replace('#/kh/' + encodeURIComponent(r.created[0]));
+      else { S.btf.tab = 'KH'; location.replace('#/bt'); }
+    }
+  } catch (e) {
+    if (e.code === 'INVALID' && e.extra && e.extra.errors) {
+      const lines = [];
+      e.extra.errors.forEach(x => {
+        if (x.field === 'items' && x.line) lines.push(x.line);
+        else if (!scFieldErr(form, x.field, reasonKey(x.reason))) toast(tr('eFieldX', [{ vi: x.field + (x.value ? ' ' + x.value : ''), zh: x.field }, tr(reasonKey(x.reason))]), 'err');
+      });
+      toast(lines.length ? tr('eItemLine', [lines.join(', ')]) : tr('eInvalid'), 'err');
+    } else if (e.code === 'CONFLICT') {
+      await khConflict(e);
+    } else if (e.code !== 'AUTH') {
+      toast(errText(e), 'err');
+    }
+  } finally { if (form.isConnected) busy(form, false); }
+}
+
+/* ---- Chi tiết phiếu bảo trì ---- */
+VIEWS.bt = p => {
+  if (p[1] && p[2] === 'sua') return viewBtForm('edit', p[1]);
+  if (p[1]) return viewBtDetail(p[1]);
+  return viewBtList();
+};
+VIEWS['bt-moi'] = p => viewBtForm('new', p[1]);
+
+function kqRow(x) {
+  const range = x.KieuNhap === 'SO' ? rangeText(x) : '';
+  return `<div class="kq-row ${x.KetQua === 'KHONGDAT' ? 'fail' : 'pass'}">
+    <span class="mau-no">${esc(x.STT)}</span>
+    <div class="grow">${bi(x.HangMucVI, x.HangMucZH)}
+      ${range ? `<div class="small muted">${t('ckRange', range)}</div>` : ''}
+      ${x.GhiChu ? `<div class="kq-note">${esc(x.GhiChu)}</div>` : ''}</div>
+    <div class="kq-val">${x.KieuNhap === 'SO' ? `<b>${esc(fmtNum(x.GiaTri))}${x.DonVi ? ' ' + esc(x.DonVi) : ''}</b>` : ''}${kqTag(x.KetQua)}</div>
+  </div>`;
+}
+
+function viewBtDetail(so) {
+  if (!S.data) return loadingView();
+  const bt = btBySo(so);
+  if (!bt) {
+    if (S.online) {
+      setTimeout(() => fetchMissingBT(so), 0);
+      return { title: 'btDetail', back: 'bt', tab: 'cv', html: `<div class="card pad center"><div class="spinner"></div><p class="muted">${t('loading')}</p></div>` };
+    }
+    return { title: 'btDetail', back: 'bt', tab: 'cv', html: `<div class="empty">${ic('search')}${t('btNotFound', so)}</div>` };
+  }
+  const st = bt.TrangThaiPhieu;
+  const ql = isQL();
+  const kh = khByMa(bt.MaKH);
+  const enc = encodeURIComponent(bt.SoPhieu);
+  const kq = S.btKQ[bt.SoPhieu];
+  const nBad = Number(bt.SoMucKhongDat) || 0;
+  const nAll = Number(bt.SoMuc) || 0;
+  const linked = allSC().filter(x => x.PhieuNguon === bt.SoPhieu).sort(scSortDesc);
+  const canEdit = ql || BT_CHO.includes(st);
+  const may = isOn(bt.MayDung);
+  const kv = (key, val, raw) => (val === '' || val === null || val === undefined) ? '' :
+    `<div class="kv"><div class="k">${t(key)}</div><div class="v">${raw ? val : esc(val)}</div></div>`;
+  const kvCol = (key, val) => val ? `<div class="kv col"><div class="k">${t(key)}</div><div class="v pre">${esc(val)}</div></div>` : '';
+  const main = [];
+  if (st === 'CHODUYET' && ql) {
+    main.push(`<button class="btn" data-act="btOp" data-op="tralai" data-so="${esc(bt.SoPhieu)}">${ic('undo')}${t('scDoTraLai')}</button>`);
+    main.push(`<button class="btn primary" data-act="btOp" data-op="duyet" data-so="${esc(bt.SoPhieu)}">${ic('checkCircle')}${t('btDoApprove')}</button>`);
+  }
+  if (st === 'TRALAI') main.push(`<a class="btn primary" href="#/bt/${enc}/sua">${ic('edit')}${t('btFixResend')}</a>`);
+  return {
+    live: true, title: 'btDetail', back: 'bt', tab: 'cv',
+    html: `
+      <section class="card hero bt-${esc(st)}">
+        <div class="hero-main">
+          <div class="hero-ids"><span class="sc-no big">${esc(bt.SoPhieu)}</span>${btPill(st)}</div>
+          ${bi(bt.TenVI, bt.TenZH, 'hero-name')}
+          <div class="sc-meta">${kqSumHtml(bt)}${btTiming(bt)}</div>
+        </div>
+      </section>
+      ${st === 'TRALAI' ? `<div class="notice warn">${ic('undo')}<div>${t('scReturnedNote', bt.LyDoTraLai || '')}</div></div>` : ''}
+      ${st === 'CHODUYET' && !ql ? `<div class="notice">${ic('info')}<div>${t('btWaitApprove')}</div></div>` : ''}
+      ${tbCard(bt.IDThietBi)}
+      ${kh ? `<a class="card tb-link kh-link" href="#/kh/${encodeURIComponent(kh.MaKH)}">${ic('calendar', 'mi')}
+          <div class="grow"><div class="mini-top"><span class="sc-no">${esc(kh.MaKH)}</span></div>${bi(kh.TenVI, kh.TenZH, 'kh-name')}</div>${ic('chev', 'mi-chev')}</a>` : ''}
+      ${(canEdit && st !== 'TRALAI') || nBad ? `<div class="actions-row">
+        ${canEdit && st !== 'TRALAI' ? `<a class="btn sm" href="#/bt/${enc}/sua">${ic('edit')}${t('edit')}</a>` : ''}
+        ${nBad ? `<a class="btn sm" href="#/sc-moi/${encodeURIComponent(bt.IDThietBi)}/${enc}">${ic('wrench')}${t('btMakeSc')}</a>` : ''}
+      </div>` : ''}
+      <section class="card">
+        <div class="card-h">${ic('checklist')}${t('btResults')}<span class="count">${nAll - nBad}/${nAll}</span></div>
+        ${kq ? kq.map(kqRow).join('') : (S.online ? `<div class="empty small"><div class="spinner"></div></div>` : `<div class="empty small">${ic('offline')}${t('btKqOffline')}</div>`)}
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('clock')}${t('btExec')}</div>
+        ${kv('btStart', fmtTime(bt.TGBatDau))}
+        ${kv('btEnd', fmtTime(bt.TGKetThuc))}
+        ${bt.PhutThucHien !== '' ? kv('btDuration', durBi(Number(bt.PhutThucHien)), true) : ''}
+        ${kv('scMayDung', may ? `<span class="tag bad">${t('scYesStop')}</span> ${bt.PhutDungMay !== '' ? durBi(Number(bt.PhutDungMay)) : ''}` : `<span class="tag ok">${t('scNoStop')}</span>`, true)}
+        ${kv('khDue', bt.HanKeHoach ? fmtDate(bt.HanKeHoach) : '')}
+        ${kv('scNguoiThucHien', bt.NguoiThucHien)}
+        ${kv('scNhaThau', bt.NhaThau)}
+        ${kvCol('scVatTu', bt.VatTu)}
+        ${bt.GioChay !== '' ? kv('btGioChay', fmtNum(bt.GioChay) + ' h') : ''}
+        ${kvCol('btNhanXet', bt.NhanXet)}
+      </section>
+      ${linked.length ? `<section class="card">
+        <div class="card-h">${ic('wrench')}${t('btLinkedSc')}<span class="count">${linked.length}</span></div>
+        <div class="mini-list">${linked.map(x => scMini(x, false)).join('')}</div>
+      </section>` : ''}
+      ${st === 'DONG' ? `<section class="card">
+        <div class="card-h">${ic('checkCircle', 'ok')}${t('scApproval')}</div>
+        ${kv('scNguoiDuyet', `${esc(bt.NguoiDuyet || '')} · ${esc(fmtTime(bt.TGDuyet))}`, true)}
+        ${kvCol('scYKien', bt.YKienDuyet)}
+      </section>` : ''}
+      ${Number(bt.SoLanTraLai) > 0 && st !== 'TRALAI' ? `<p class="muted small audit">${t('scReturnedCount', bt.SoLanTraLai)}: ${esc(bt.LyDoTraLai)}</p>` : ''}
+      <p class="muted small audit">${t('createdBy', fmtTime(bt.NgayTao), bt.NguoiTao || '—')}<br>${t('updatedBy', fmtTime(bt.NgaySua), bt.NguoiSua || '—')}</p>
+      ${ql ? `<button class="btn block danger-outline" data-act="btDelete" data-so="${esc(bt.SoPhieu)}">${ic('trash')}${t('btDelete')}</button>` : ''}
+      ${main.length ? `<div class="form-actions">${main.join('')}</div>` : ''}`,
+    after: () => { if (!kq) loadBtKQ(bt.SoPhieu); }
+  };
+}
+
+async function loadBtKQ(so, force) {
+  if (!S.online || (!force && S.btKQ[so]) || S.btKQBusy[so]) return;
+  S.btKQBusy[so] = true;
+  try {
+    const r = await api('listBT', { so });
+    mergeBT(r.rows);
+    S.btKQ[so] = r.ketQua || [];
+  } catch (e) { if (e.code !== 'AUTH' && e.code !== 'NOT_FOUND') toast(errText(e), 'err'); }
+  delete S.btKQBusy[so];
+  const p = route();
+  if (p[0] === 'sc-moi') {
+    const ta = $('#f-sc [data-sf="MoTa"]'), bt = btBySo(so);
+    if (ta && bt && S.scForm && S.scForm.PhieuNguon === bt.SoPhieu && ta.value === S.scForm.MoTa) {
+      S.scForm.MoTa = scMoTaFromBt(bt);
+      ta.value = S.scForm.MoTa;
+    }
+    return;
+  }
+  if (p[0] === 'bt' && p[1] && p[1].toUpperCase() === String(so).toUpperCase() && !$('.overlay.open')) {
+    const y = window.scrollY; render(true); window.scrollTo(0, y);
+  }
+}
+
+async function fetchMissingBT(so) {
+  try {
+    const r = await api('listBT', { so });
+    mergeBT(r.rows);
+    S.btKQ[r.rows[0].SoPhieu] = r.ketQua || [];
+  } catch (e) { /* hiển thị không tìm thấy */ }
+  const p = route();
+  if (p[0] !== 'bt' || !p[1] || p[1].toUpperCase() !== String(so).toUpperCase()) return;
+  if (btBySo(so)) render(true);
+  else $('#view .page').innerHTML = `<div class="empty">${ic('search')}${t('btNotFound', so)}</div>`;
+}
+
+/* ---- Hộp thoại: duyệt · trả lại ---- */
+function btOpSheet(op, so) {
+  const bt = btBySo(so);
+  if (!bt || !needOnline()) return;
+  const isDuyet = op === 'duyet';
+  const f = isDuyet ? 'YKienDuyet' : 'LyDoTraLai';
+  const sh = openSheet(`
+    <form id="f-btop" class="form" autocomplete="off" novalidate>
+      <div class="pk-head"><h3 class="h3">${t(isDuyet ? 'btDoApprove' : 'scDoTraLai')}</h3><button type="button" class="hbtn" data-act="closeSheet">${ic('x')}</button></div>
+      <div class="muted small"><span class="sc-no">${esc(bt.SoPhieu)}</span> · ${esc(bt.IDThietBi)} · ${esc(bt.TenVI)}</div>
+      ${isDuyet ? `<div class="appr"><div class="row gap wrap">${kqSumHtml(bt)}${btTiming(bt)}</div>
+        <div class="small">${esc(fmtTime(bt.TGBatDau))} → ${esc(fmtTime(bt.TGKetThuc))} · ${esc(bt.NguoiThucHien)}</div>
+        ${bt.VatTu ? `<div class="pre small muted">${esc(bt.VatTu)}</div>` : ''}</div>
+        <p class="muted small">${t('btApproveHint')}</p>` : ''}
+      <label class="fld" data-fld="${f}"><span class="lb">${t(isDuyet ? 'scYKien' : 'scLyDoTraLai')}${isDuyet ? '' : ' <b class="req">*</b>'}</span>
+        <textarea data-sf="${f}" rows="3" maxlength="1000" ${isDuyet ? '' : `placeholder="${esc(tp('btTraLaiPh'))}"`}></textarea><span class="fe"></span></label>
+      <div class="msg" id="btop-msg"></div>
+      <button class="btn primary block" type="submit">${ic(isDuyet ? 'checkCircle' : 'undo')}${t(isDuyet ? 'btDoApprove' : 'scDoTraLai')}</button>
+    </form>`);
+  const form = $('#f-btop', sh);
+  form.addEventListener('input', clearFieldErr);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (!needOnline()) return;
+    const o = scCollect(form);
+    if (!isDuyet && !String(o[f] || '').trim()) { scFieldErr(form, f, 'eRequired'); return; }
+    busy(form, true);
+    try {
+      const r = await api('btAction', { op, so: bt.SoPhieu, ngaySuaCu: bt.NgaySua || '', bt: o });
+      mergeBT([r.bt]);
+      if (r.kh) upsertKH(r.kh);
+      closeSheet();
+      toast(isDuyet ? (r.kh ? tr('btApprovedNext', [fmtDate(r.kh.HanTiepTheo)]) : tr('scOpDone_duyet')) : tr('scOpDone_tralai'), 'ok');
+      render(true);
+    } catch (e) {
+      if (e.code === 'INVALID' && e.extra && e.extra.errors) e.extra.errors.forEach(x => scFieldErr(form, x.field, reasonKey(x.reason)) || ($('#btop-msg').innerHTML = t(reasonKey(x.reason))));
+      else if (e.code === 'CONFLICT' || e.code === 'BAD_STATE') await btHandleErr(e);
+      else if (e.code !== 'AUTH') $('#btop-msg').innerHTML = errHtml(e);
+    } finally { if (form.isConnected) busy(form, false); }
+  });
+}
+
+async function btHandleErr(e) {
+  if (e.code === 'CONFLICT' || e.code === 'BAD_STATE') {
+    const ex = e.extra || {};
+    const msg = e.code === 'CONFLICT' ? tr('scConflictMsg', [ex.nguoiSua || '?', fmtTime(ex.ngaySua)]) : tr('eBadState');
+    closeSheet();
+    if (await confirmDlg('eConflict', msg, { ok: 'reload' })) {
+      S.btForm = null;
+      S.btKQ = {};
+      await refresh(true);
+      const p = route();
+      if (p[0] === 'bt' && p[1] && p[2]) location.replace('#/bt/' + encodeURIComponent(p[1]));
+      else render();
+    }
+  } else if (e.code !== 'AUTH') {
+    toast(errText(e), 'err');
+  }
+}
+
+async function btDelete(so) {
+  const bt = btBySo(so);
+  if (!bt || !needOnline()) return;
+  if (!(await confirmDlg(tr('btDeleteQ', [so]), 'btDeleteMsg', { ok: 'delete', danger: true }))) return;
+  try {
+    const r = await api('btAction', { op: 'xoa', so, ngaySuaCu: bt.NgaySua || '' });
+    removeBT(so);
+    if (r.kh) upsertKH(r.kh);
+    toast(tr('scDeleted', [so]), 'ok');
+    location.replace('#/bt');
+  } catch (e) { await btHandleErr(e); }
+}
+
+/* ---- Biểu mẫu ghi thực hiện (new) / sửa phiếu (edit) ---- */
+function viewBtForm(mode, key) {
+  if (!S.data) return loadingView();
+  let kh, cur = null, snap;
+  if (mode === 'new') {
+    kh = khByMa(key);
+    if (!kh) return { title: 'btRecord', back: 'bt', tab: 'cv', html: `<div class="empty">${t('khNotFound', key)}</div>` };
+    const tb = tbById(kh.IDThietBi);
+    const bad = !isOn(kh.DangDung) ? 'khStoppedNote' : (tb && tb.TrangThai === 'THANHLY' ? 'eRetired' : (!hmOf(kh.MaKH).length ? 'khNoItems' : ''));
+    if (bad) return { title: 'btRecord', back: 'kh/' + encodeURIComponent(kh.MaKH), tab: 'cv', html: `<div class="notice warn">${ic('alert')}<div>${t(bad)}</div></div>` };
+    snap = hmOf(kh.MaKH);
+  } else {
+    cur = btBySo(key);
+    if (!cur) return { title: 'btDetail', back: 'bt', tab: 'cv', html: `<div class="empty">${t('btNotFound', key)}</div>` };
+    if (!(isQL() || BT_CHO.includes(cur.TrangThaiPhieu))) return forbiddenView('bt/' + encodeURIComponent(cur.SoPhieu));
+    kh = khByMa(cur.MaKH) || { MaKH: cur.MaKH, TenVI: cur.TenVI, TenZH: cur.TenZH, IDThietBi: cur.IDThietBi, ChuKySo: '1', ChuKyDonVi: 'THANG' };
+    snap = S.btKQ[cur.SoPhieu];
+    if (!snap) {
+      if (!S.online) return { title: 'btEditTitle', back: 'bt/' + encodeURIComponent(cur.SoPhieu), tab: 'cv', html: `<div class="notice warn">${ic('offline')}<div>${t('btKqOffline')}</div></div>` };
+      setTimeout(() => loadBtKQ(cur.SoPhieu), 0);
+      return { title: 'btEditTitle', back: 'bt/' + encodeURIComponent(cur.SoPhieu), tab: 'cv', html: `<div class="card pad center"><div class="spinner"></div><p class="muted">${t('loading')}</p></div>` };
+    }
+  }
+  const fkey = mode + ':' + (cur ? cur.SoPhieu : kh.MaKH);
+  if (!S.btForm || S.btForm.key !== fkey) {
+    const end = tsNow();
+    S.btForm = {
+      key: fkey, mode, orig: cur ? cur.NgaySua : undefined, items: snap.map(x => Object.assign({}, x)),
+      bt: cur ? Object.assign({}, cur) : { TGBatDau: tsAddMin(end, -60), TGKetThuc: end, MayDung: isOn(kh.CanDungMay) ? '1' : '0',
+        NhaThau: kh.NhaThau || '', NguoiThucHien: S.name, VatTu: '', GioChay: '', NhanXet: '' },
+      kq: snap.map(x => ({ STT: x.STT, KetQua: cur ? x.KetQua : '', GiaTri: cur ? x.GiaTri : '', GhiChu: cur ? x.GhiChu : '' }))
+    };
+  }
+  const F = S.btForm;
+  const B = F.bt;
+  const ql = isQL();
+  const s = kh.HanTiepTheo !== undefined ? khStatus(kh) : null;
+  const dueDate = cur ? cur.HanKeHoach : (s && s.due);
+  const back = cur ? 'bt/' + encodeURIComponent(cur.SoPhieu) : 'kh/' + encodeURIComponent(kh.MaKH);
+  const hasDat = F.items.some(x => x.KieuNhap !== 'SO');
+  const btTime = (f, key) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)} <b class="req">*</b></span>
+    <input type="datetime-local" data-bf="${f}" value="${esc(tsToInput(B[f]))}"><span class="fe"></span></label>`;
+  const btText = (f, key, req, attrs, ph) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)}${req ? ' <b class="req">*</b>' : ''}</span>
+    <input data-bf="${f}" value="${esc(B[f] || '')}" ${attrs || ''} ${ph ? `placeholder="${esc(tp(ph))}"` : ''}><span class="fe"></span></label>`;
+  const btArea = (f, key, ph) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)}</span>
+    <textarea data-bf="${f}" rows="2" maxlength="2000" ${ph ? `placeholder="${esc(tp(ph))}"` : ''}>${esc(B[f] || '')}</textarea><span class="fe"></span></label>`;
+  const resend = cur && cur.TrangThaiPhieu === 'TRALAI';
+  const names = uniqueRecent('NguoiThucHien', [S.name].concat(allBT().slice().sort(btSortDesc).map(x => x.NguoiThucHien)));
+  return {
+    title: cur ? 'btEditTitle' : 'btRecord', back, tab: 'cv', noPtr: true,
+    html: `
+      <form id="f-bt" class="form" autocomplete="off" novalidate>
+        <section class="card pad slim sc-sumcard kh-${s && !cur ? esc(s.st) : 'CHUADEN'}">
+          <div class="mini-top"><span class="sc-no">${esc(cur ? cur.SoPhieu : kh.MaKH)}</span>${cur ? btPill(cur.TrangThaiPhieu) : (s ? khPill(s.st) : '')}</div>
+          <div class="kh-name">${bi(kh.TenVI, kh.TenZH)}</div>
+          ${tbLine(kh.IDThietBi)}
+          <div class="sum-times">
+            <div>${t('khDue')}<b>${esc(fmtDate(dueDate)) || '—'}</b></div>
+            <div>${t('khCycle')}<b>${biTr(cycleTr(kh))}</b></div>
+          </div>
+          ${cur && cur.TrangThaiPhieu === 'TRALAI' ? `<div class="notice warn">${ic('undo')}<div>${t('scReturnedNote', cur.LyDoTraLai || '')}</div></div>` : ''}
+          ${kh.HuongDan ? `<details class="guide"><summary>${ic('info')}${t('khGuide')}</summary><div class="pre small">${esc(kh.HuongDan)}</div></details>` : ''}
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('clock')}${t('btExec')}</div>
+          ${btTime('TGBatDau', 'btStart')}${btTime('TGKetThuc', 'btEnd')}
+          <label class="switch"><input type="checkbox" data-bf="MayDung" ${isOn(B.MayDung) ? 'checked' : ''}><span class="sw"></span>${t('scMayDungQ')}</label>
+          <p class="muted small">${t('btStopHint')}</p>
+        </section>
+        <section class="card pad ck-card">
+          <div class="card-h flat" data-fld="ketQua">${ic('checklist')}${t('khChecklist')}</div>
+          <div class="ck-bar"><span id="ck-prog"></span>
+            ${hasDat ? `<button type="button" class="btn sm" data-act="btAllPass">${ic('check')}${t('btAllPass')}</button>` : ''}</div>
+          <div id="ck-list">${F.items.map((it, i) => ckItemHtml(it, i, F.kq[i])).join('')}</div>
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('wrench')}${t('scResult')}</div>
+          ${btText('NguoiThucHien', 'scNguoiThucHien', true, 'maxlength="150" list="dl-ng"', 'scNguoiThucHienPh')}
+          ${btText('NhaThau', 'scNhaThau', false, 'maxlength="150" list="dl-nt"', 'scNhaThauPh')}
+          ${btArea('VatTu', 'scVatTu', 'scVatTuPh')}
+          ${btText('GioChay', 'btGioChay', false, 'inputmode="decimal" maxlength="12"', 'btGioChayPh')}
+          ${btArea('NhanXet', 'btNhanXet')}
+          ${cur && ql && cur.TrangThaiPhieu === 'DONG' ? btArea('YKienDuyet', 'scYKien') : ''}
+          ${!cur && ql ? `<label class="switch"><input type="checkbox" id="bt-duyet" checked><span class="sw"></span>${t('btDuyetLuon')}</label>` : ''}
+          ${!cur && !ql ? `<p class="muted small">${t('btAfterSaveHint')}</p>` : ''}
+        </section>
+        ${datalist('dl-ng', names)}${datalist('dl-nt', uniqueRecent('NhaThau', allKH().map(k => k.NhaThau)))}
+        <div class="form-actions">
+          <a class="btn" href="#/${back}">${t('cancel')}</a>
+          <button class="btn primary" type="submit">${ic('check')}${t(resend && !ql ? 'btResend' : (cur ? 'save' : 'btSave'))}</button>
+        </div>
+      </form>`,
+    after: () => {
+      const form = $('#f-bt');
+      form.addEventListener('submit', saveBtForm);
+      form.addEventListener('input', e => { clearFieldErr(e); btFormInput(e.target); });
+      form.addEventListener('change', e => btFormInput(e.target));
+      ckProgress();
+    }
+  };
+}
+
+function ckItemHtml(it, i, r) {
+  const fail = r.KetQua === 'KHONGDAT';
+  const range = it.KieuNhap === 'SO' ? rangeText(it) : '';
+  const showNote = fail || !!r.GhiChu;
+  return `<div class="ck-item${r.KetQua ? (fail ? ' fail' : ' pass') : ''}" data-ck="${i}" data-fld="ck${i}">
+    <div class="ck-head"><span class="mau-no">${i + 1}</span><div class="grow">${bi(it.HangMucVI, it.HangMucZH)}</div></div>
+    ${it.KieuNhap === 'SO'
+      ? `<div class="ck-num"><input data-ckf="GiaTri" data-i="${i}" value="${esc(String(r.GiaTri || '').replace('.', ','))}" inputmode="decimal" maxlength="14" placeholder="${esc(range || tp('kindNum'))}">
+          ${it.DonVi ? `<span class="ck-unit">${esc(it.DonVi)}</span>` : ''}<span class="ck-res">${kqTag(r.KetQua)}</span></div>
+         ${range ? `<div class="small muted">${t('ckRange', range)}</div>` : ''}`
+      : `<div class="seg ck-seg">
+          <label class="yes"><input type="radio" name="ck${i}" value="DAT" data-ckf="KetQua" data-i="${i}" ${r.KetQua === 'DAT' ? 'checked' : ''}><span>${ic('check')}${t('kqDAT')}</span></label>
+          <label class="no"><input type="radio" name="ck${i}" value="KHONGDAT" data-ckf="KetQua" data-i="${i}" ${fail ? 'checked' : ''}><span>${ic('x')}${t('kqKHONGDAT')}</span></label>
+        </div>`}
+    <div class="ck-note" ${showNote ? '' : 'hidden'}><input data-ckf="GhiChu" data-i="${i}" value="${esc(r.GhiChu || '')}" maxlength="500" placeholder="${esc(tp(fail ? 'ckNoteFailPh' : 'ckNotePh'))}"></div>
+    ${showNote ? '' : `<button type="button" class="link ck-add" data-act="ckNote" data-i="${i}">+ ${tp('ckAddNote')}</button>`}
+    <span class="fe"></span>
+  </div>`;
+}
+
+/** Chấm kết quả kiểu SO theo ngưỡng (giống backend btKetQua_) */
+function ckEval(it, v) {
+  const s = String(v || '').trim().replace(',', '.');
+  if (!s) return '';
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return 'BAD';
+  const n = Number(s);
+  const lo = it.Min !== '' && it.Min !== undefined && it.Min !== null ? Number(it.Min) : null;
+  const hi = it.Max !== '' && it.Max !== undefined && it.Max !== null ? Number(it.Max) : null;
+  return (lo !== null && n < lo) || (hi !== null && n > hi) ? 'KHONGDAT' : 'DAT';
+}
+
+function btFormInput(el) {
+  const F = S.btForm;
+  if (!F) return;
+  if (el.dataset.bf) {
+    const f = el.dataset.bf;
+    if (el.type === 'checkbox') F.bt[f] = el.checked ? '1' : '0';
+    else if (el.type === 'datetime-local') F.bt[f] = inputToTs(el.value);
+    else F.bt[f] = el.value;
+    return;
+  }
+  if (!el.dataset.ckf) return;
+  const i = Number(el.dataset.i);
+  const r = F.kq[i], it = F.items[i];
+  if (!r || !it) return;
+  const box = el.closest('.ck-item');
+  if (el.dataset.ckf === 'GhiChu') { r.GhiChu = el.value; return; }
+  if (el.dataset.ckf === 'GiaTri') {
+    r.GiaTri = el.value.trim();
+    const k = ckEval(it, r.GiaTri);
+    r.KetQua = k === 'BAD' ? '' : k;
+    $('.ck-res', box).innerHTML = k === 'BAD' ? `<span class="tag bad">${t('eNumber')}</span>` : kqTag(r.KetQua);
+  } else if (el.checked) {
+    r.KetQua = el.value;
+  }
+  box.classList.toggle('pass', r.KetQua === 'DAT');
+  box.classList.toggle('fail', r.KetQua === 'KHONGDAT');
+  box.classList.remove('has-err');
+  if (r.KetQua === 'KHONGDAT') {
+    const nw = $('.ck-note', box);
+    if (nw.hidden) { nw.hidden = false; const b = $('.ck-add', box); if (b) b.remove(); }
+    $('input', nw).placeholder = tp('ckNoteFailPh');
+  }
+  ckProgress();
+}
+
+function ckProgress() {
+  const F = S.btForm, el = $('#ck-prog');
+  if (!F || !el) return;
+  const done = F.kq.filter(r => r.KetQua).length, bad = F.kq.filter(r => r.KetQua === 'KHONGDAT').length;
+  const x = tr('ckProg', [done, F.kq.length]);
+  el.innerHTML = bi(x.vi, x.zh) + (bad ? ` <span class="tag bad">${ic('x')}${bad}</span>` : '');
+}
+
+async function saveBtForm(ev) {
+  ev.preventDefault();
+  if (!needOnline()) return;
+  const form = ev.target;
+  const F = S.btForm;
+  if (!F) return;
+  const B = F.bt;
+  $$('.has-err', form).forEach(el => { el.classList.remove('has-err'); const fe = $('.fe', el); if (fe) fe.innerHTML = ''; });
+  let bad = false;
+  ['TGBatDau', 'TGKetThuc'].forEach(f => { if (!B[f]) { scFieldErr(form, f, 'eRequired'); bad = true; } });
+  if (B.TGBatDau && B.TGKetThuc && tsMs(B.TGKetThuc) < tsMs(B.TGBatDau)) { scFieldErr(form, 'TGKetThuc', 'eTimeAfter', [tr('btStart')]); bad = true; }
+  if (!String(B.NguoiThucHien || '').trim()) { scFieldErr(form, 'NguoiThucHien', 'eRequired'); bad = true; }
+  if (String(B.GioChay || '').trim() && !/^\d+([.,]\d+)?$/.test(String(B.GioChay).trim())) { scFieldErr(form, 'GioChay', 'eNumber'); bad = true; }
+  F.kq.forEach((r, i) => {
+    const it = F.items[i];
+    const k = it.KieuNhap === 'SO' ? ckEval(it, r.GiaTri) : r.KetQua;
+    if (!k || k === 'BAD') { scFieldErr(form, 'ck' + i, k === 'BAD' ? 'eNumber' : 'ckMissing'); bad = true; }
+  });
+  if (bad) { toast('eInvalid', 'err'); const first = $('.has-err', form); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+  const bt = {};
+  ['TGBatDau', 'TGKetThuc', 'MayDung', 'NguoiThucHien', 'NhaThau', 'VatTu', 'GioChay', 'NhanXet'].forEach(f => { bt[f] = String(B[f] === undefined ? '' : B[f]).trim(); });
+  bt.GioChay = bt.GioChay.replace(',', '.');
+  if (F.mode === 'edit' && isQL() && B.TrangThaiPhieu === 'DONG') bt.YKienDuyet = String(B.YKienDuyet || '').trim();
+  const ketQua = F.kq.map(r => ({ STT: r.STT, KetQua: r.KetQua, GiaTri: String(r.GiaTri || '').replace(',', '.'), GhiChu: String(r.GhiChu || '').trim() }));
+  const payload = { bt, ketQua };
+  if (F.mode === 'new') {
+    payload.op = 'create';
+    payload.kh = F.key.split(':')[1];
+    if ($('#bt-duyet') && $('#bt-duyet').checked) payload.duyetLuon = true;
+  } else {
+    payload.op = 'capnhat';
+    payload.so = B.SoPhieu;
+    payload.ngaySuaCu = F.orig || '';
+  }
+  busy(form, true);
+  try {
+    const r = await api('btAction', payload);
+    mergeBT([r.bt]);
+    if (r.ketQua) S.btKQ[r.bt.SoPhieu] = r.ketQua;
+    if (r.kh) upsertKH(r.kh);
+    S.btForm = null;
+    const so = r.bt.SoPhieu;
+    if (r.unchanged) toast('scNoChange', 'ok');
+    else if (F.mode === 'new') toast(r.kh ? tr('btSavedNext', [so, fmtDate(r.kh.HanTiepTheo)]) : tr('btSaved', [so]), 'ok');
+    else toast(B.TrangThaiPhieu === 'TRALAI' ? 'btResent' : 'saved', 'ok');
+    const detail = '#/bt/' + encodeURIComponent(so);
+    if (F.mode === 'edit' && S.prevHash === detail) history.back(); else location.replace(detail);
+    const nBad = Number(r.bt.SoMucKhongDat) || 0;
+    if (F.mode === 'new' && nBad) setTimeout(() => offerScFromBt(so, nBad), 400);
+  } catch (e) {
+    if (e.code === 'INVALID' && e.extra && e.extra.errors) {
+      e.extra.errors.forEach(x => {
+        if (x.field === 'ketQua') (x.items || []).forEach(stt => { const i = F.items.findIndex(it => String(it.STT) === String(stt)); if (i >= 0) scFieldErr(form, 'ck' + i, 'ckMissing'); });
+        else if (!scFieldErr(form, x.field, x.reason === 'TIME_ORDER' ? 'eTimeAfter' : reasonKey(x.reason), x.reason === 'TIME_ORDER' ? [tr('btStart')] : [])) {
+          toast(tr('eFieldX', [{ vi: x.field, zh: x.field }, tr(reasonKey(x.reason))]), 'err');
+        }
+      });
+      toast('eInvalid', 'err');
+      const first = $('.has-err', form); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } else await btHandleErr(e);
+  } finally { if (form.isConnected) busy(form, false); }
+}
+
+async function offerScFromBt(so, nBad) {
+  const bt = btBySo(so);
+  if (!bt) return;
+  if (await confirmDlg(tr('btOfferScQ', [nBad]), 'btOfferScMsg', { ok: 'btMakeSc' })) {
+    location.hash = '#/sc-moi/' + encodeURIComponent(bt.IDThietBi) + '/' + encodeURIComponent(so);
+  }
+}
+
+/** Mô tả phiếu sửa chữa điền sẵn từ các hạng mục không đạt của phiếu bảo trì */
+function scMoTaFromBt(bt) {
+  const kq = S.btKQ[bt.SoPhieu] || [];
+  const bad = kq.filter(x => x.KetQua === 'KHONGDAT');
+  const head = `[${bt.SoPhieu}] ${bt.TenVI}`;
+  if (!bad.length) return `${head}: ${tr('kqBadN', [Number(bt.SoMucKhongDat) || 0, Number(bt.SoMuc) || 0]).vi}`;
+  return head + ':\n' + bad.map(x => `- ${x.HangMucVI}${x.KieuNhap === 'SO' ? ` = ${fmtNum(x.GiaTri)}${x.DonVi ? ' ' + x.DonVi : ''}` : ''}${x.GhiChu ? ` (${x.GhiChu})` : ''}`).join('\n');
 }
 
 /* -------------------------------- Thêm -------------------------------- */
@@ -2274,7 +3802,7 @@ const ACTION_KEYS = {
   THEM: 'aAdd', SUA: 'aEdit', DANG_NHAP: 'aLogin', THIET_LAP_PIN: 'aSetup', DOI_PIN_KTV: 'aPinKtv',
   DOI_PIN_QL: 'aPinQl', SUA_MAU: 'aTpl', RESET_PIN_QL: 'aReset',
   NHAN: 'aNhan', CHO: 'aCho', TIEPTUC: 'aTiepTuc', HOANTHANH: 'aHoanThanh', DUYET: 'aDuyet',
-  TRALAI: 'aTraLai', HUY: 'aHuy', XOA: 'aXoa'
+  TRALAI: 'aTraLai', HUY: 'aHuy', XOA: 'aXoa', DOI_HAN: 'aDoiHan'
 };
 
 VIEWS.nk = () => {
@@ -2316,7 +3844,9 @@ function drawNk() {
     const act = k ? t(k) : esc(r.HanhDong);
     const link = r.Sheet === 'ThietBi' && r.MaBanGhi ? `<a class="tb-id" href="#/tb/${encodeURIComponent(r.MaBanGhi)}">${esc(r.MaBanGhi)}</a>`
       : (r.Sheet === 'PhieuSuaChua' && r.MaBanGhi && r.HanhDong !== 'XOA' ? `<a class="tb-id" href="#/sc/${encodeURIComponent(r.MaBanGhi)}">${esc(r.MaBanGhi)}</a>`
-        : (r.MaBanGhi ? `<span class="tb-id">${esc(r.MaBanGhi)}</span>` : ''));
+        : (r.Sheet === 'PhieuBaoTri' && r.MaBanGhi && r.HanhDong !== 'XOA' ? `<a class="tb-id" href="#/bt/${encodeURIComponent(r.MaBanGhi)}">${esc(r.MaBanGhi)}</a>`
+          : (r.Sheet === 'KeHoachBaoTri' && r.MaBanGhi ? `<a class="tb-id" href="#/kh/${encodeURIComponent(r.MaBanGhi)}">${esc(r.MaBanGhi)}</a>`
+            : (r.MaBanGhi ? `<span class="tb-id">${esc(r.MaBanGhi)}</span>` : ''))));
     return `<div class="nk-item">
       <div class="nk-top"><span class="nk-act a-${esc(r.HanhDong)}">${act}</span>${link}<span class="sp"></span><span class="muted small">${esc(fmtTime(r.ThoiGian))}</span></div>
       <div class="nk-who">${ic('user')}${esc(r.NguoiThucHien)} · ${r.VaiTro === 'QL' ? t('roleQLShort') : t('roleKTVShort')}${r.Sheet ? ` · <span class="muted">${esc(r.Sheet)}</span>` : ''}</div>
@@ -2874,6 +4404,113 @@ const ACT = {
     const dup = $('#sc-dup');
     if (dup) dup.innerHTML = scDupNotice(v);
   },
+  /* Bảo trì kế hoạch */
+  btTab: el => { S.btf.tab = el.dataset.t; render(true); },
+  btTabGo: el => { S.btf.tab = el.dataset.t; S.btf.q = ''; },
+  btFilter: async el => {
+    const k = el.dataset.k, loai = k === 'kv' ? 'KHUVUC' : 'NHOMTB', all = tr(k === 'kv' ? 'allAreas' : 'allGroups');
+    const v = await picker({ title: k === 'kv' ? 'fViTri' : 'fNhomTB', value: S.btf[k],
+      items: [{ v: '', vi: all.vi, zh: all.zh }].concat(dmList(loai, true).map(d => ({ v: d.Ma, vi: d.TenVI, zh: d.TenZH }))) });
+    if (v === undefined) return;
+    S.btf[k] = v; render(true);
+  },
+  btNamFilter: async el => {
+    const k = el.dataset.k, loai = k === 'kv' ? 'KHUVUC' : 'NHOMTB', all = tr(k === 'kv' ? 'allAreas' : 'allGroups');
+    const v = await picker({ title: k === 'kv' ? 'fViTri' : 'fNhomTB', value: S.btNam[k],
+      items: [{ v: '', vi: all.vi, zh: all.zh }].concat(dmList(loai, true).map(d => ({ v: d.Ma, vi: d.TenVI, zh: d.TenZH }))) });
+    if (v === undefined) return;
+    S.btNam[k] = v; render(true);
+  },
+  btYear: el => { S.btNam.y += Number(el.dataset.d); render(true); },
+  btCsv: () => exportBtCsv(),
+  btNamCsv: () => exportYearCsv(),
+  btLoadOld: el => btLoadOld(el),
+  btOp: el => btOpSheet(el.dataset.op, el.dataset.so),
+  btDelete: el => btDelete(el.dataset.so),
+  btAllPass: () => {
+    const F = S.btForm;
+    if (!F) return;
+    F.items.forEach((it, i) => { if (it.KieuNhap !== 'SO' && !F.kq[i].KetQua) F.kq[i].KetQua = 'DAT'; });
+    $('#ck-list').innerHTML = F.items.map((it, i) => ckItemHtml(it, i, F.kq[i])).join('');
+    ckProgress();
+  },
+  ckNote: el => {
+    const box = el.closest('.ck-item');
+    const nw = $('.ck-note', box);
+    nw.hidden = false;
+    el.remove();
+    $('input', nw).focus();
+  },
+  khDoiHan: el => khDoiHanSheet(el.dataset.ma),
+  khPickTb: async el => {
+    if (!S.khForm) return;
+    const items = allTb().filter(x => x.TrangThai !== 'THANHLY')
+      .sort((a, b) => String(a.ID).localeCompare(String(b.ID), 'en', { numeric: true }))
+      .map(x => ({ v: x.ID, vi: x.TenMay, zh: x.TenMayZH || dmZh('NHOMTB', x.NhomTB),
+        sub: [x.MaNhaMay, dmVi('NHOMTB', x.NhomTB), dmVi('KHUVUC', x.ViTri)].filter(Boolean).join(' · ') }));
+    const v = await pickMany({ title: 'khChooseTb', items, selected: S.khForm.ids });
+    if (!v || !S.khForm) return;
+    S.khForm.ids = new Set(v);
+    el.innerHTML = khTbLabel() + ic('down');
+    $('#kh-tbs').innerHTML = khTbChips();
+    const box = el.closest('.fld');
+    box.classList.remove('has-err');
+    $('.fe', box).innerHTML = '';
+  },
+  khTbRemove: el => {
+    if (!S.khForm) return;
+    S.khForm.ids.delete(el.dataset.id);
+    $('#kh-tbs').innerHTML = khTbChips();
+    const b = $('[data-act="khPickTb"]');
+    if (b) b.innerHTML = khTbLabel() + ic('down');
+  },
+  khCopyCk: async () => {
+    const F = S.khForm;
+    if (!F) return;
+    const items = allKH().filter(k => k.MaKH !== F.kh.MaKH && hmOf(k.MaKH).length)
+      .sort((a, b) => String(a.TenVI).localeCompare(String(b.TenVI), 'vi') || String(a.MaKH).localeCompare(String(b.MaKH)))
+      .map(k => { const tb = tbById(k.IDThietBi); return { v: 'KH:' + k.MaKH, vi: k.TenVI, zh: k.TenZH,
+        sub: `${k.MaKH} · ${k.IDThietBi}${tb ? ' ' + tb.TenMay : ''} · ${tp('nItems', hmOf(k.MaKH).length)}` }; });
+    const tpl = tr('khFromShiftTpl');
+    [{ Ma: 'CHUNG', TenVI: tr('generalTpl').vi, TenZH: tr('generalTpl').zh }].concat(dmList('NHOMTB')).forEach(g => {
+      const m = mauOf(g.Ma).filter(x => isOn(x.DangDung));
+      if (m.length) items.push({ v: 'MAU:' + g.Ma, vi: `${tpl.vi}: ${g.TenVI}`, zh: `${tpl.zh}：${g.TenZH || ''}`, sub: tp('nItems', m.length) });
+    });
+    if (!items.length) { toast('khNoCopySrc', 'warn'); return; }
+    const v = await picker({ title: 'khCopyFrom', items });
+    if (!v || !S.khForm) return;
+    const src = v.startsWith('KH:') ? hmOf(v.slice(3)) : mauOf(v.slice(4)).filter(x => isOn(x.DangDung));
+    if (F.items.length && !(await confirmDlg('khCopyFrom', 'khCopyReplaceQ', { ok: 'khCopyReplace' }))) return;
+    F.items = src.map(x => ({ HangMucVI: x.HangMucVI, HangMucZH: x.HangMucZH, KieuNhap: x.KieuNhap === 'SO' ? 'SO' : 'DAT',
+      DonVi: x.DonVi || '', Min: x.Min || '', Max: x.Max || '' }));
+    $('#kh-ck').innerHTML = drawKhCk();
+    toast(tr('khCopied', [F.items.length]), 'ok');
+  },
+  khCkAdd: () => {
+    const F = S.khForm;
+    if (!F) return;
+    F.items.push({ HangMucVI: '', HangMucZH: '', KieuNhap: 'DAT', DonVi: '', Min: '', Max: '' });
+    $('#kh-ck').innerHTML = drawKhCk();
+    const last = $$('#kh-ck .mau-item').pop();
+    if (last) { last.scrollIntoView({ behavior: 'smooth', block: 'center' }); $('input', last).focus(); }
+  },
+  khCkMove: el => {
+    const F = S.khForm;
+    if (!F) return;
+    const i = Number(el.dataset.i), d = Number(el.dataset.d), a = F.items;
+    if (i + d < 0 || i + d >= a.length) return;
+    [a[i], a[i + d]] = [a[i + d], a[i]];
+    $('#kh-ck').innerHTML = drawKhCk();
+  },
+  khCkDel: async el => {
+    const F = S.khForm;
+    if (!F) return;
+    const i = Number(el.dataset.i);
+    const it = F.items[i];
+    if (it.HangMucVI && !(await confirmDlg('deleteItem', { vi: it.HangMucVI, zh: it.HangMucZH }, { ok: 'delete', danger: true }))) return;
+    F.items.splice(i, 1);
+    $('#kh-ck').innerHTML = drawKhCk();
+  },
   scPickLoai: async el => {
     if (!S.scForm) return;
     const cur = S.scForm.LoaiHong;
@@ -2905,6 +4542,8 @@ function bindGlobal() {
   window.addEventListener('hashchange', () => {
     if ($('#overlay').classList.contains('open')) closeSheet();
     if (S.mau && !location.hash.startsWith('#/mau/')) S.mau = null;
+    if (S.btForm && !/^#\/(bt-moi\/|bt\/[^/]+\/sua)/.test(location.hash)) S.btForm = null;
+    if (S.khForm && !/^#\/(kh-moi|kh\/[^/]+\/sua)/.test(location.hash)) S.khForm = null;
     render();
   });
   window.addEventListener('online', () => { if (S.auth) refresh(true); else if (document.body.classList.contains('auth-mode')) renderAuth(); });

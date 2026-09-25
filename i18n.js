@@ -1,0 +1,365 @@
+/* Từ điển song ngữ Việt – Trung (giản thể).
+ * Mỗi mục: { vi, zh } — hiển thị tiếng Việt dòng trên, tiếng Trung dòng dưới.
+ * Mục có tham số dùng hàm: n => `...${n}...`
+ * Tên danh mục (khu vực, nhóm máy, trạng thái) và hạng mục kiểm tra KHÔNG nằm ở đây
+ * mà nằm trong Google Sheets (cột TenVI/TenZH, HangMucVI/HangMucZH) để sửa trực tiếp.
+ */
+const T = {
+  /* ---------- Chung ---------- */
+  appName: { vi: 'Quản lý cơ điện', zh: '机电管理' },
+  back: { vi: 'Quay lại', zh: '返回' },
+  refresh: { vi: 'Làm mới', zh: '刷新' },
+  cancel: { vi: 'Hủy', zh: '取消' },
+  ok: { vi: 'Đồng ý', zh: '确定' },
+  save: { vi: 'Lưu', zh: '保存' },
+  saved: { vi: 'Đã lưu', zh: '已保存' },
+  edit: { vi: 'Sửa', zh: '编辑' },
+  delete: { vi: 'Xóa', zh: '删除' },
+  search: { vi: 'Tìm kiếm', zh: '搜索' },
+  choose: { vi: 'Chọn…', zh: '请选择…' },
+  noResult: { vi: 'Không có kết quả', zh: '无结果' },
+  loading: { vi: 'Đang tải…', zh: '加载中…' },
+  retry: { vi: 'Thử lại', zh: '重试' },
+  reload: { vi: 'Tải lại', zh: '重新加载' },
+  comingSoon: { vi: 'Sắp có', zh: '即将推出' },
+  synced: { vi: 'Đã cập nhật dữ liệu', zh: '数据已更新' },
+  active: { vi: 'Đang dùng', zh: '启用' },
+  inactive: { vi: 'Ngừng dùng', zh: '已停用' },
+  doer: { vi: 'Người thực hiện', zh: '执行人' },
+  updateReady: { vi: 'Có bản cập nhật – chạm để tải lại', zh: '有新版本 – 点击更新' },
+  offlineBanner: {
+    vi: w => `Mất kết nối – chỉ xem, dữ liệu lưu lúc ${w}`,
+    zh: w => `离线 – 仅可查看，数据缓存于 ${w}`
+  },
+  offlineNoEdit: { vi: 'Đang mất mạng – chỉ xem được, chưa sửa được', zh: '离线状态 – 仅可查看，无法修改' },
+
+  /* ---------- Thanh tab ---------- */
+  tabHome: { vi: 'Trang chủ', zh: '首页' },
+  tabTb: { vi: 'Thiết bị', zh: '设备' },
+  tabScan: { vi: 'Quét QR', zh: '扫码' },
+  tabWork: { vi: 'Công việc', zh: '工作' },
+  tabMore: { vi: 'Thêm', zh: '更多' },
+
+  /* ---------- Đăng nhập ---------- */
+  notConfigured: {
+    vi: 'Chưa cấu hình địa chỉ API. Mở file app.js, dán URL Web app của Apps Script vào dòng API_URL rồi tải lên lại.',
+    zh: '尚未配置API地址。请打开app.js，在API_URL一行粘贴Apps Script网页应用URL后重新上传。'
+  },
+  needNetLogin: { vi: 'Cần có mạng để đăng nhập lần đầu.', zh: '首次登录需要联网。' },
+  connecting: { vi: 'Đang kết nối…', zh: '正在连接…' },
+  setupTitle: { vi: 'Thiết lập PIN quản lý', zh: '设置管理员PIN' },
+  setupDesc: {
+    vi: 'Lần đầu sử dụng: đặt PIN cho vai trò Quản lý (6–12 chữ số). Sau đó vào Thêm → Đổi PIN để đặt PIN cho kỹ thuật viên.',
+    zh: '首次使用：设置管理员PIN（6–12位数字）。之后在“更多→修改PIN”中为技术员设置PIN。'
+  },
+  setupBtn: { vi: 'Lưu và bắt đầu', zh: '保存并开始' },
+  setupOk: { vi: 'Đã thiết lập PIN quản lý', zh: '管理员PIN已设置' },
+  yourName: { vi: 'Họ tên của bạn', zh: '您的姓名' },
+  yourNamePh: { vi: 'VD: Nguyễn Văn A', zh: '例：阮文A' },
+  loginTitle: { vi: 'Đăng nhập', zh: '登录' },
+  loginBtn: { vi: 'Đăng nhập', zh: '登录' },
+  loginHint: { vi: 'Đăng nhập được giữ 30 ngày trên điện thoại này.', zh: '本手机登录有效期30天。' },
+  roleQL: { vi: 'Quản lý', zh: '管理员' },
+  roleKTV: { vi: 'Kỹ thuật viên', zh: '技术员' },
+  roleQLShort: { vi: 'QL', zh: '管理员' },
+  roleKTVShort: { vi: 'KTV', zh: '技术员' },
+  pin: { vi: 'PIN', zh: 'PIN码' },
+  pinQL: { vi: 'PIN quản lý', zh: '管理员PIN' },
+  pinKTV: { vi: 'PIN kỹ thuật viên', zh: '技术员PIN' },
+  pinConfirm: { vi: 'Nhập lại PIN', zh: '再次输入PIN' },
+  logout: { vi: 'Đăng xuất', zh: '退出登录' },
+  logoutMsg: { vi: 'Đăng xuất và xóa dữ liệu lưu tạm trên điện thoại này?', zh: '退出登录并清除本机缓存数据？' },
+
+  /* ---------- Trang chủ ---------- */
+  statTotal: { vi: 'Thiết bị', zh: '设备' },
+  statRunning: { vi: 'Đang chạy', zh: '运行中' },
+  statStopped: { vi: 'Đang dừng', zh: '停机' },
+  stoppedTitle: { vi: 'Máy đang dừng', zh: '停机设备' },
+  noStopped: { vi: 'Không có máy dừng', zh: '无停机设备' },
+  ktvPinMissing: { vi: 'Chưa đặt PIN kỹ thuật viên – chạm để đặt', zh: '尚未设置技术员PIN – 点击设置' },
+  openTickets: { vi: 'Phiếu đang mở', zh: '未关闭工单' },
+  pmDue: { vi: 'Bảo trì đến hạn', zh: '到期保养' },
+  checkToday: { vi: 'Kiểm tra hôm nay', zh: '今日点检' },
+  contractsDue: { vi: 'Hợp đồng sắp hết hạn', zh: '即将到期合同' },
+  energyMonth: { vi: 'Năng lượng tháng này', zh: '本月能耗' },
+  leakAlert: { vi: 'Cảnh báo chênh lệch điện nước', zh: '水电差异预警' },
+
+  /* ---------- Danh sách thiết bị ---------- */
+  searchTb: { vi: 'Tìm ID, mã, tên, hãng, model…', zh: '搜索ID、编号、名称、品牌、型号…' },
+  allAreas: { vi: 'Mọi khu vực', zh: '全部区域' },
+  allGroups: { vi: 'Mọi nhóm', zh: '全部类别' },
+  ttActive: { vi: 'Tất cả (trừ thanh lý)', zh: '全部（不含报废）' },
+  ttAll: { vi: 'Tất cả', zh: '全部' },
+  ttStop: { vi: 'Đang dừng (chờ sửa + đang sửa)', zh: '停机（待修+维修中）' },
+  clearFilter: { vi: 'Bỏ lọc', zh: '清除筛选' },
+  nDevices: { vi: n => `${n} thiết bị`, zh: n => `${n} 台设备` },
+  noDevicesYet: { vi: 'Chưa có thiết bị nào', zh: '暂无设备' },
+  addTb: { vi: 'Thêm thiết bị', zh: '新增设备' },
+  editTb: { vi: 'Sửa thiết bị', zh: '编辑设备' },
+  exportCsv: { vi: 'Xuất CSV', zh: '导出CSV' },
+  importExcel: { vi: 'Nhập từ Excel', zh: '从Excel导入' },
+  printLabels: { vi: 'In tem QR', zh: '打印二维码标签' },
+  printLabel: { vi: 'In tem', zh: '打印标签' },
+
+  /* ---------- Chi tiết / biểu mẫu thiết bị ---------- */
+  tbDetail: { vi: 'Chi tiết thiết bị', zh: '设备详情' },
+  tbNotFound: { vi: id => `Không tìm thấy thiết bị ${id}`, zh: id => `未找到设备 ${id}` },
+  info: { vi: 'Thông tin', zh: '基本信息' },
+  openDocs: { vi: 'Tài liệu', zh: '资料' },
+  history: { vi: 'Lịch sử', zh: '历史记录' },
+  histRepair: { vi: 'Lịch sử sửa chữa', zh: '维修记录' },
+  histPM: { vi: 'Bảo trì', zh: '保养记录' },
+  histCheck: { vi: 'Kiểm tra đầu ca', zh: '班前点检' },
+  histHours: { vi: 'Giờ chạy', zh: '运行小时' },
+  createdBy: { vi: (a, b) => `Tạo: ${a} · ${b}`, zh: (a, b) => `创建：${a} · ${b}` },
+  updatedBy: { vi: (a, b) => `Sửa lần cuối: ${a} · ${b}`, zh: (a, b) => `最后修改：${a} · ${b}` },
+  idFixed: { vi: 'ID hệ thống – không đổi', zh: '系统ID – 不可更改' },
+  idAuto: { vi: 'ID hệ thống (TB0001…) được cấp tự động khi lưu.', zh: '保存时自动分配系统ID（TB0001…）。' },
+  fTenMay: { vi: 'Tên máy', zh: '设备名称' },
+  fTenMayZH: { vi: 'Tên máy tiếng Trung', zh: '中文名称' },
+  fNhomTB: { vi: 'Nhóm thiết bị', zh: '设备类别' },
+  fViTri: { vi: 'Khu vực', zh: '区域' },
+  fTrangThai: { vi: 'Trạng thái', zh: '状态' },
+  fMaNhaMay: { vi: 'Mã nhà máy', zh: '厂内编号' },
+  fHang: { vi: 'Hãng', zh: '品牌' },
+  fModel: { vi: 'Model', zh: '型号' },
+  fSoSeri: { vi: 'Số seri', zh: '序列号' },
+  fNamSuDung: { vi: 'Năm sử dụng', zh: '投用年份' },
+  fCongSuat: { vi: 'Công suất', zh: '功率' },
+  fCongSuatKW: { vi: 'Công suất (kW)', zh: '功率（kW）' },
+  fThongSo: { vi: 'Thông số kỹ thuật', zh: '技术参数' },
+  fLinkTaiLieu: { vi: 'Link tài liệu (Google Drive)', zh: '资料链接（Google Drive）' },
+  fGhiChu: { vi: 'Ghi chú', zh: '备注' },
+  dupMaTitle: { vi: 'Mã nhà máy bị trùng', zh: '厂内编号重复' },
+  dupMaMsg: {
+    vi: (m, id, n) => `Mã ${m} đang dùng cho ${id} – ${n}. Vẫn lưu?`,
+    zh: (m, id, n) => `编号 ${m} 已用于 ${id} – ${n}。仍要保存吗？`
+  },
+  dupMaAfter: { vi: ids => `Lưu ý: mã nhà máy trùng với ${ids}`, zh: ids => `注意：厂内编号与 ${ids} 重复` },
+  saveAnyway: { vi: 'Vẫn lưu', zh: '仍然保存' },
+  conflictMsg: {
+    vi: (w, d) => `${w} vừa sửa máy này lúc ${d}. Tải lại để xem bản mới rồi sửa tiếp.`,
+    zh: (w, d) => `${w} 于 ${d} 修改了此设备。请重新加载后再编辑。`
+  },
+
+  /* ---------- Quét QR ---------- */
+  scanTitle: { vi: 'Quét mã QR', zh: '扫描二维码' },
+  cameraStarting: { vi: 'Đang mở camera…', zh: '正在打开相机…' },
+  torch: { vi: 'Đèn pin', zh: '手电筒' },
+  scanImage: { vi: 'Quét từ ảnh', zh: '从图片识别' },
+  manualId: { vi: 'Hoặc nhập ID / mã nhà máy', zh: '或输入ID/厂内编号' },
+  noCamera: { vi: 'Trình duyệt không hỗ trợ camera', zh: '浏览器不支持相机' },
+  scanLibFail: { vi: 'Không tải được bộ quét QR – cần mạng cho lần quét đầu tiên', zh: '无法加载扫码组件 – 首次扫码需联网' },
+  cameraDenied: { vi: 'Chưa cho phép dùng camera. Vào cài đặt trình duyệt để cấp quyền.', zh: '未授权使用相机，请在浏览器设置中允许。' },
+  cameraError: { vi: 'Không mở được camera', zh: '无法打开相机' },
+  noQrInImage: { vi: 'Không tìm thấy mã QR trong ảnh', zh: '图片中未识别到二维码' },
+
+  /* ---------- Công việc / Thêm ---------- */
+  repairTickets: { vi: 'Phiếu sửa chữa', zh: '维修单' },
+  repairDesc: { vi: 'Tạo – nhận – xử lý – duyệt đóng', zh: '创建–接单–处理–审核关闭' },
+  pmPlan: { vi: 'Bảo trì kế hoạch', zh: '计划保养' },
+  pmDesc: { vi: 'Lịch theo ngày hoặc giờ chạy, checklist', zh: '按日期或运行小时排程，检查表' },
+  shiftCheck: { vi: 'Kiểm tra đầu ca', zh: '班前点检' },
+  checkDesc: { vi: 'Theo mẫu kiểm tra của từng nhóm máy', zh: '按各类设备点检模板' },
+  runHours: { vi: 'Giờ chạy máy', zh: '设备运行小时' },
+  hoursDesc: { vi: 'Ghi mỗi ngày một lần', zh: '每天记录一次' },
+  modules: { vi: 'Chức năng', zh: '功能模块' },
+  settings: { vi: 'Cài đặt', zh: '设置' },
+  contracts: { vi: 'Hợp đồng bảo trì thuê ngoài', zh: '外包维保合同' },
+  predictive: { vi: 'Bảo trì dự đoán', zh: '预测性维护' },
+  rca: { vi: 'Phân tích sự cố RCA', zh: '故障根因分析（RCA）' },
+  reports: { vi: 'Báo cáo MTTR/MTBF', zh: 'MTTR/MTBF报表' },
+  energy: { vi: 'Năng lượng điện nước', zh: '水电能源' },
+  circuits: { vi: 'Tra cứu lộ điện', zh: '电路查询' },
+  monitoring: { vi: 'Giám sát thiết bị', zh: '设备监控' },
+  catalogs: { vi: 'Danh mục', zh: '基础数据' },
+  checkTemplates: { vi: 'Mẫu kiểm tra', zh: '点检模板' },
+  changePin: { vi: 'Đổi PIN', zh: '修改PIN' },
+  auditLog: { vi: 'Nhật ký thao tác', zh: '操作日志' },
+  changeName: { vi: 'Đổi tên', zh: '修改姓名' },
+  installApp: { vi: 'Cài app lên màn hình chính', zh: '安装到主屏幕' },
+  iosInstall: { vi: 'iPhone: bấm Chia sẻ → Thêm vào MH chính để cài app.', zh: 'iPhone：点“分享”→“添加到主屏幕”安装。' },
+
+  /* ---------- Danh mục ---------- */
+  dmKhuVuc: { vi: 'Khu vực', zh: '区域' },
+  dmNhomTB: { vi: 'Nhóm TB', zh: '设备类别' },
+  dmTrangThai: { vi: 'Trạng thái', zh: '状态' },
+  readOnlyKTV: { vi: 'Chỉ quản lý được sửa. Kỹ thuật viên chỉ xem.', zh: '仅管理员可修改，技术员仅可查看。' },
+  nUsed: { vi: n => `${n} máy`, zh: n => `${n}台` },
+  addItem: { vi: 'Thêm mục', zh: '新增项目' },
+  editItem: { vi: 'Sửa mục', zh: '编辑项目' },
+  nameVI: { vi: 'Tên tiếng Việt', zh: '越南语名称' },
+  nameZH: { vi: 'Tên tiếng Trung', zh: '中文名称' },
+  code: { vi: 'Mã', zh: '代码' },
+  order: { vi: 'Thứ tự', zh: '排序' },
+  autoCode: { vi: 'Để trống: tự tạo', zh: '留空自动生成' },
+  systemStatus: { vi: 'Trạng thái hệ thống: chỉ đổi được tên, không ngừng dùng được.', zh: '系统状态：仅可改名，不可停用。' },
+  codeFixed: { vi: 'Mã không đổi được sau khi tạo (dữ liệu liên kết theo mã).', zh: '代码创建后不可更改（数据按代码关联）。' },
+
+  /* ---------- Mẫu kiểm tra ---------- */
+  generalTpl: { vi: 'Mẫu chung', zh: '通用模板' },
+  mauIntro: {
+    vi: 'Hạng mục kiểm tra đầu ca theo nhóm máy. Nhóm chưa có mẫu riêng dùng Mẫu chung. Mục nhập số có ngưỡng Min/Max: vượt ngưỡng tính là Không đạt.',
+    zh: '按设备类别设置班前点检项目。无专用模板的类别使用通用模板。数值项可设最小/最大值，超出即判为不合格。'
+  },
+  nItems: { vi: n => `${n} hạng mục đang dùng`, zh: n => `${n}个启用项目` },
+  usesGeneral: { vi: 'Dùng mẫu chung', zh: '使用通用模板' },
+  usesGeneralLong: {
+    vi: 'Nhóm này chưa có mẫu riêng nên đang dùng Mẫu chung. Thêm hạng mục để tạo mẫu riêng.',
+    zh: '该类别尚无专用模板，目前使用通用模板。添加项目即可建立专用模板。'
+  },
+  addCheckItem: { vi: 'Thêm hạng mục', zh: '新增点检项目' },
+  noCheckItems: { vi: 'Chưa có hạng mục', zh: '暂无点检项目' },
+  itemVI: { vi: 'Hạng mục (Việt)', zh: '项目（越南语）' },
+  itemZH: { vi: 'Hạng mục (Trung)', zh: '项目（中文）' },
+  kindPass: { vi: 'Đạt / Không đạt', zh: '合格/不合格' },
+  kindNum: { vi: 'Nhập số', zh: '数值' },
+  unit: { vi: 'Đơn vị', zh: '单位' },
+  min: { vi: 'Min', zh: '最小值' },
+  max: { vi: 'Max', zh: '最大值' },
+  deleteItem: { vi: 'Xóa hạng mục này?', zh: '删除此项目？' },
+  eItemReq: { vi: i => `Hạng mục ${i}: chưa nhập tên`, zh: i => `第${i}项：未填写名称` },
+  eItemNum: { vi: i => `Hạng mục ${i}: Min/Max phải là số`, zh: i => `第${i}项：最小/最大值须为数字` },
+  eItemMinMax: { vi: i => `Hạng mục ${i}: Min lớn hơn Max`, zh: i => `第${i}项：最小值大于最大值` },
+  eItemLine: { vi: l => `Lỗi ở hạng mục: ${l}`, zh: l => `以下项目有误：${l}` },
+
+  /* ---------- PIN ---------- */
+  pinIsSet: { vi: 'Đã đặt', zh: '已设置' },
+  pinNotSet: { vi: 'Chưa đặt', zh: '未设置' },
+  pinKTVDesc: {
+    vi: 'Cả đội kỹ thuật viên dùng chung PIN này. Đổi PIN thì mọi máy KTV đang đăng nhập bị đăng xuất.',
+    zh: '全体技术员共用此PIN。修改后所有已登录的技术员手机将被退出。'
+  },
+  pinQLDesc: {
+    vi: 'Đổi PIN quản lý: các máy quản lý khác phải đăng nhập lại, máy này vẫn giữ đăng nhập.',
+    zh: '修改管理员PIN后，其他管理员手机需重新登录，本机保持登录。'
+  },
+  oldPin: { vi: 'PIN hiện tại', zh: '当前PIN' },
+  newPin: { vi: 'PIN mới (6–12 chữ số)', zh: '新PIN（6–12位数字）' },
+  setKtvPin: { vi: 'Đặt PIN kỹ thuật viên', zh: '设置技术员PIN' },
+  changeKtvPin: { vi: 'Đổi PIN kỹ thuật viên', zh: '修改技术员PIN' },
+  changeQlPin: { vi: 'Đổi PIN quản lý', zh: '修改管理员PIN' },
+  ktvLogoutWarn: { vi: 'Mọi kỹ thuật viên đang đăng nhập sẽ bị đăng xuất và phải dùng PIN mới.', zh: '所有已登录的技术员将被退出，需使用新PIN登录。' },
+  pinSaved: { vi: 'Đã lưu PIN', zh: 'PIN已保存' },
+  pinForgot: {
+    vi: 'Quên PIN quản lý: mở Apps Script, chạy hàm resetPinQuanLy, rồi mở app đặt PIN mới ngay.',
+    zh: '忘记管理员PIN：打开Apps Script运行resetPinQuanLy函数，然后立即在应用中重新设置。'
+  },
+
+  /* ---------- Nhật ký ---------- */
+  searchLog: { vi: 'Tìm trong nhật ký', zh: '搜索日志' },
+  loadMore: { vi: (n, t) => `Xem thêm (${n}/${t})`, zh: (n, t) => `加载更多（${n}/${t}）` },
+  endOfLog: { vi: t => `Đã hiện hết – ${t} dòng`, zh: t => `已全部显示 – 共${t}条` },
+  aAdd: { vi: 'Thêm', zh: '新增' },
+  aEdit: { vi: 'Sửa', zh: '修改' },
+  aLogin: { vi: 'Đăng nhập', zh: '登录' },
+  aSetup: { vi: 'Thiết lập PIN', zh: '设置PIN' },
+  aPinKtv: { vi: 'Đổi PIN KTV', zh: '修改技术员PIN' },
+  aPinQl: { vi: 'Đổi PIN QL', zh: '修改管理员PIN' },
+  aTpl: { vi: 'Sửa mẫu kiểm tra', zh: '修改点检模板' },
+  aReset: { vi: 'Xóa PIN QL', zh: '重置管理员PIN' },
+
+  /* ---------- In tem ---------- */
+  temStep1: { vi: 'Chọn thiết bị', zh: '选择设备' },
+  selectAllShown: { vi: 'Chọn tất cả đang hiện', zh: '全选当前列表' },
+  clearSelection: { vi: 'Bỏ chọn tất cả', zh: '取消全选' },
+  nSelected: { vi: n => `Đã chọn ${n}`, zh: n => `已选 ${n}` },
+  selectSome: { vi: 'Chưa chọn thiết bị nào', zh: '尚未选择设备' },
+  temStep2: { vi: 'Ô bắt đầu trên tờ decal', zh: '标签纸起始位置' },
+  temStartHint: {
+    vi: 'Tờ A4 21 tem (3 × 7, tem 63,5 × 38,1 mm). Chạm ô bắt đầu để dùng tiếp tờ decal còn thừa.',
+    zh: 'A4纸21枚标签（3×7，每枚63.5×38.1毫米）。点击起始格可继续使用剩余标签纸。'
+  },
+  nPages: { vi: n => `Cần ${n} tờ decal`, zh: n => `需要 ${n} 张标签纸` },
+  temCalib: { vi: 'Căn chỉnh lệch', zh: '偏移校准' },
+  temCalibHint: {
+    vi: 'In thử lên giấy thường, chồng lên tờ decal rồi soi đèn. Lệch thì chỉnh (mm): số dương = dịch sang phải / xuống dưới.',
+    zh: '先用普通纸试打印，与标签纸重叠对光检查。如有偏差请调整（毫米）：正值=向右/向下移动。'
+  },
+  offX: { vi: 'Lệch ngang (mm)', zh: '水平偏移（毫米）' },
+  offY: { vi: 'Lệch dọc (mm)', zh: '垂直偏移（毫米）' },
+  preview: { vi: 'Xem trước tờ 1', zh: '第1页预览' },
+  printScaleHint: {
+    vi: 'Khi in: khổ A4, tỷ lệ 100% (Thực tế / Actual size), tắt "Vừa trang", lề = Không.',
+    zh: '打印时：A4纸，100%比例（实际大小），关闭“适合页面”，边距设为无。'
+  },
+  printTest: { vi: 'In thử 1 tờ', zh: '试打印一页' },
+  printNow: { vi: 'In tem', zh: '打印标签' },
+  testSheetNote: { vi: 'IN THỬ – chồng lên tờ decal để kiểm tra lệch', zh: '试打印 – 与标签纸重叠检查偏差' },
+
+  /* ---------- Nhập Excel ---------- */
+  impStep1: {
+    vi: 'Lấy file mẫu, hoặc xuất danh sách hiện có để sửa hàng loạt (giữ cột ID = cập nhật đúng máy đó).',
+    zh: '下载模板，或导出现有清单批量修改（保留ID列=更新对应设备）。'
+  },
+  impTemplate: { vi: 'File mẫu', zh: '导入模板' },
+  impExportAll: { vi: 'Xuất toàn bộ', zh: '导出全部' },
+  impStep2: {
+    vi: 'Điền trong Excel. Nhóm, khu vực, trạng thái ghi tên tiếng Việt, tiếng Trung hoặc mã đều được.',
+    zh: '在Excel中填写。类别、区域、状态可填越南语名、中文名或代码。'
+  },
+  impStep3: { vi: 'Bôi đen cả bảng (kể cả dòng tiêu đề) → Copy → dán vào ô dưới → Kiểm tra.', zh: '选中整个表格（含标题行）→复制→粘贴到下方→检查。' },
+  impRules: {
+    vi: 'Dòng không có ID = thêm máy mới (bắt buộc Tên máy, Nhóm, Khu vực). Dòng có ID = cập nhật; ô trống giữ nguyên giá trị cũ.',
+    zh: '无ID的行=新增设备（必填名称、类别、区域）。有ID的行=更新；空白栏位保留原值。'
+  },
+  impPastePh: { vi: 'Dán bảng từ Excel vào đây', zh: '在此粘贴Excel表格' },
+  impChooseCsv: { vi: 'Chọn file CSV', zh: '选择CSV文件' },
+  impCheck: { vi: 'Kiểm tra', zh: '检查' },
+  impCols: { vi: n => `Nhận diện được ${n} cột`, zh: n => `识别到 ${n} 列` },
+  impNew: { vi: n => `${n} thêm mới`, zh: n => `新增 ${n}` },
+  impUpd: { vi: n => `${n} cập nhật`, zh: n => `更新 ${n}` },
+  impSame: { vi: n => `${n} không đổi`, zh: n => `无变化 ${n}` },
+  impErr: { vi: n => `${n} lỗi`, zh: n => `错误 ${n}` },
+  impLine: { vi: n => `Dòng ${n}`, zh: n => `第${n}行` },
+  kNew: { vi: 'Mới', zh: '新增' },
+  kUpd: { vi: 'Cập nhật', zh: '更新' },
+  kSame: { vi: 'Không đổi', zh: '无变化' },
+  kErr: { vi: 'Lỗi', zh: '错误' },
+  impRun: { vi: n => `Nhập ${n} dòng`, zh: n => `导入 ${n} 行` },
+  impDone: { vi: 'Đã nhập xong', zh: '导入完成' },
+  impPrintNew: { vi: 'In tem cho các máy mới', zh: '为新设备打印标签' },
+  impNeedRows: { vi: 'Cần ít nhất dòng tiêu đề và 1 dòng dữ liệu', zh: '至少需要标题行和1行数据' },
+  impNoHeader: { vi: 'Không nhận ra dòng tiêu đề – cần có cột "Tên máy" hoặc "ID"', zh: '无法识别标题行 – 需包含“设备名称”或“ID”列' },
+  impNoName: { vi: 'Thiếu tên máy', zh: '缺少设备名称' },
+  impMissNhom: { vi: 'Thiếu nhóm thiết bị', zh: '缺少设备类别' },
+  impMissKv: { vi: 'Thiếu khu vực', zh: '缺少区域' },
+  impBadDm: { vi: v => `Không có trong danh mục: "${v}"`, zh: v => `基础数据中不存在：“${v}”` },
+  impConfirmTitle: { vi: 'Ghi dữ liệu vào Google Sheets?', zh: '写入Google表格？' },
+  impConfirmMsg: {
+    vi: n => `${n} dòng sẽ được ghi (thêm mới hoặc cập nhật). Mọi thay đổi được ghi vào nhật ký.`,
+    zh: n => `将写入 ${n} 行（新增或更新），所有更改记入日志。`
+  },
+
+  /* ---------- Lỗi ---------- */
+  eRequired: { vi: 'Bắt buộc nhập', zh: '必填' },
+  eYear: { vi: 'Năm gồm 4 chữ số', zh: '年份须为4位数字' },
+  eNumber: { vi: 'Phải là số', zh: '须为数字' },
+  eLink: { vi: 'Link phải bắt đầu bằng http:// hoặc https://', zh: '链接须以http://或https://开头' },
+  eCode: { vi: 'Không có trong danh mục hoặc đã ngừng dùng', zh: '基础数据中不存在或已停用' },
+  eIdNotFound: { vi: 'Không có ID này', zh: '该ID不存在' },
+  eDupCode: { vi: 'Mã đã tồn tại', zh: '代码已存在' },
+  eBadCode: { vi: 'Mã chỉ gồm chữ in hoa không dấu, số, dấu _ (2–20 ký tự)', zh: '代码仅限大写字母、数字、下划线（2–20位）' },
+  eSystemCode: { vi: 'Trạng thái hệ thống, không thể ngừng dùng', zh: '系统状态，不能停用' },
+  eMinMax: { vi: 'Min lớn hơn Max', zh: '最小值大于最大值' },
+  eNameReq: { vi: 'Vui lòng nhập họ tên (ít nhất 2 ký tự)', zh: '请输入姓名（至少2个字符）' },
+  ePinFormat: { vi: 'PIN phải gồm 6–12 chữ số', zh: 'PIN须为6–12位数字' },
+  ePinMismatch: { vi: 'Hai lần nhập PIN không khớp', zh: '两次输入的PIN不一致' },
+  eOldPin: { vi: 'PIN hiện tại không đúng', zh: '当前PIN不正确' },
+  eInvalid: { vi: 'Dữ liệu chưa hợp lệ – kiểm tra các ô báo đỏ', zh: '数据无效 – 请检查红色标记栏位' },
+  eConflict: { vi: 'Dữ liệu vừa bị người khác sửa', zh: '数据刚被他人修改' },
+  eForbidden: { vi: 'Bạn không có quyền thực hiện việc này', zh: '您无权执行此操作' },
+  eNetwork: { vi: 'Không kết nối được máy chủ. Kiểm tra mạng.', zh: '无法连接服务器，请检查网络。' },
+  eAuth: { vi: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại', zh: '登录已失效，请重新登录' },
+  eWrongPin: { vi: 'PIN không đúng', zh: 'PIN不正确' },
+  eWrongPinLeft: { vi: n => `PIN không đúng. Còn ${n} lần thử`, zh: n => `PIN不正确，还可尝试${n}次` },
+  eLocked: { vi: m => `Nhập sai quá nhiều lần. Vui lòng chờ ${m} phút`, zh: m => `错误次数过多，请等待${m}分钟` },
+  ePinNotSet: { vi: 'Quản lý chưa đặt PIN kỹ thuật viên', zh: '管理员尚未设置技术员PIN' },
+  eNotSetup: { vi: 'App chưa được thiết lập', zh: '应用尚未初始化' },
+  eAlreadySetup: { vi: 'PIN quản lý đã được thiết lập trước đó', zh: '管理员PIN已设置' },
+  eNotFound: { vi: 'Không tìm thấy dữ liệu', zh: '未找到数据' },
+  eBusy: { vi: 'Máy chủ đang bận, thử lại sau ít giây', zh: '服务器繁忙，请稍后重试' },
+  eTooMany: { vi: 'Quá nhiều dòng (tối đa 1.000 dòng mỗi lần)', zh: '行数过多（每次最多1000行）' },
+  eNoSheet: { vi: 'Thiếu sheet – chạy setupSheets trong Apps Script', zh: '缺少工作表 – 请在Apps Script中运行setupSheets' },
+  eServer: { vi: 'Lỗi máy chủ', zh: '服务器错误' }
+};

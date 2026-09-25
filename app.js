@@ -8,6 +8,8 @@
  *          quản lý duyệt / trả lại, lịch 12 tháng, thẻ đến hạn trên trang chủ và trang máy.
  * Phiên 4: kiểm tra đầu ca theo ca làm việc (phiếu KT), giờ chạy máy (đồng hồ / số giờ mỗi ngày),
  *          bảo trì theo giờ chạy (chu kỳ giờ, cái nào tới trước).
+ * Phiên 5: hợp đồng bảo trì thuê ngoài (nhắc sắp hết hạn, ký tiếp), bảo trì dự đoán (nhiệt ảnh, rung, cách điện,
+ *          mức A–D, xu hướng từng điểm đo, chu kỳ đo), RCA / 5 Why + hành động khắc phục, email nhắc việc hằng tuần.
  * ===================================================================== */
 'use strict';
 
@@ -15,7 +17,7 @@
 const API_URL = 'https://script.google.com/macros/s/AKfycbx0IuT4Ybp9jM_Pmzmh0NU4Ad9Heg8d3D0RVPL3jfe3fKUTVocFt1RkpwUWAw5-i7wD/exec';
 // Link app trên GitHub Pages — mã QR trên tem trỏ về đây:
 const APP_URL = 'https://luongquangdao8386-ops.github.io/quan-ly-co-dien/';
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 const SCAN_LIB = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
 const STOP_CODES = ['DUNG', 'DANGSUA'];
@@ -43,7 +45,11 @@ const S = {
   ktf: { tab: 'CHUA', kv: '', nhom: '', q: '', ngay: '', ca: '' }, ktForm: null, ktDay: {}, ktDayBusy: {}, ktTbLoaded: new Set(),
   ktNext: null, ktRet: null,
   // Giờ chạy: bộ lọc màn hình ghi, số đang nhập chưa lưu, máy đã tải lịch sử, màn hình chọn máy ghi giờ chạy
-  gcf: { ngay: '', kv: '', nhom: '', q: '' }, gcEdit: {}, gcTbLoaded: new Set(), gcSet: null
+  gcf: { ngay: '', kv: '', nhom: '', q: '' }, gcEdit: {}, gcTbLoaded: new Set(), gcSet: null,
+  // Phiên 5: hợp đồng · bảo trì dự đoán (máy đã tải đủ lịch sử đo, biểu đồ xu hướng đang hiện) · RCA
+  hdf: { tab: 'CAN', q: '' }, hdForm: null,
+  ddf: { tab: 'CAN', kv: '', nhom: '', q: '', loai: '' }, ddForm: null, ddLoaded: new Set(), ddOldLoaded: 0, ddOldBusy: false, trend: {},
+  rcaf: { tab: 'MO', kv: '', nhom: '', q: '' }, rcaForm: null
 };
 
 /* ============================== TIỆN ÍCH ============================== */
@@ -166,7 +172,12 @@ const IC = {
   forward: '<rect x="3" y="5" width="13" height="15" rx="2"/><path d="M3 10h13M7 3v4M12 3v4M16 14h6M19 11l3 3-3 3"/>',
   gauge: '<path d="M3.5 17a8.5 8.5 0 1 1 17 0"/><path d="M12 17l4.2-5.2"/><circle cx="12" cy="17" r="1.3"/><path d="M7 12.5l1 .8M12 8.5v1.3M17 12.5l-1 .8"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
-  skip: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>'
+  skip: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+  thermo: '<path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 9v7"/>',
+  vibe: '<path d="M2 12h2l2-5 3 10 3-12 3 12 3-10 2 5h2"/>',
+  insul: '<path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M13 8l-3 5h4l-3 4"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>'
 };
 function ic(name, cls) {
   return `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true">${IC[name] || ''}</svg>`;
@@ -213,7 +224,8 @@ function errText(e) {
     LOCKED: 'eLocked', PIN_NOT_SET: 'ePinNotSet', NOT_SETUP: 'eNotSetup', ALREADY_SETUP: 'eAlreadySetup',
     PIN_FORMAT: 'ePinFormat', CONFLICT: 'eConflict', NOT_FOUND: 'eNotFound', INVALID: 'eInvalid',
     BUSY: 'eBusy', TOO_MANY: 'eTooMany', NO_SHEET: 'eNoSheet', BAD_STATE: 'eBadState',
-    TPL_CHANGED: 'ktTplChanged', NO_TEMPLATE: 'ktNoTemplate', NOT_LATEST: 'gcOnlyLatest'
+    TPL_CHANGED: 'ktTplChanged', NO_TEMPLATE: 'ktNoTemplate', NOT_LATEST: 'gcOnlyLatest',
+    DUPLICATE: 'eDuplicate', NOT_READY: 'rcaNotReady', NO_EMAIL: 'nhacNoEmail'
   };
   const k = map[code] || 'eServer';
   const ex = (e && e.extra) || {};
@@ -289,8 +301,11 @@ async function refresh(silent) {
       phieuSC: d.phieuSC || [], scOld: d.scOld || 0,
       keHoachBT: d.keHoachBT || [], hangMucBT: d.hangMucBT || [], phieuBT: d.phieuBT || [], btOld: d.btOld || 0,
       kiemTra: d.kiemTra || [], mauBan: d.mauBan || [], gioChay: d.gioChay || [], today: d.today || '',
+      hopDong: d.hopDong || [], phieuDD: d.phieuDD || [], ddOld: d.ddOld || 0, rca: d.rca || [], hanhDong: d.hanhDong || [],
       ktvSet: d.ktvSet, role: d.role, savedAt: new Date().toISOString()
     };
+    S.ddLoaded = new Set();
+    S.ddOldLoaded = 0;
     S.ktDay = {};
     S.ktTbLoaded = new Set();
     S.gcTbLoaded = new Set();
@@ -667,9 +682,7 @@ VIEWS.home = () => {
   const running = tbs.filter(x => x.TrangThai === 'CHAY').length;
   const stopped = tbs.filter(x => STOP_CODES.includes(x.TrangThai))
     .sort((a, b) => STOP_CODES.indexOf(a.TrangThai) - STOP_CODES.indexOf(b.TrangThai) || String(b.NgaySua).localeCompare(String(a.NgaySua)));
-  const soon = [
-    ['contractsDue', 'file'], ['energyMonth', 'flash'], ['leakAlert', 'alert']
-  ];
+  const soon = [['energyMonth', 'flash'], ['leakAlert', 'alert']];
   const warnKtv = isQL() && S.data.ktvSet === false;
   return {
     live: true,
@@ -683,6 +696,8 @@ VIEWS.home = () => {
       ${homeScCard()}
       ${homeKtCard()}
       ${homeBtCard()}
+      ${homeDdRcaCard()}
+      ${homeHdCard()}
       <section class="card">
         <div class="card-h">${ic('alert', stopped.length ? 'bad' : 'ok')}${t('stoppedTitle')}<span class="count">${stopped.length}</span></div>
         ${stopped.length ? `<div class="mini-list">${stopped.slice(0, 30).map(miniItem).join('')}</div>`
@@ -855,12 +870,15 @@ function viewDetail(id) {
         ${tb.GhiChu ? `<div class="kv col"><div class="k">${t('fGhiChu')}</div><div class="v pre">${esc(tb.GhiChu)}</div></div>` : ''}
         ${row('fLinkTaiLieu', link ? `<a href="${esc(link)}" target="_blank" rel="noopener" class="link">${t('openDocs')}</a>` : '', true)}
       </section>
+      ${tbHdSection(tb)}
       ${tbKtSection(tb)}
       ${tbGcSection(tb)}
       ${tbScHistory(tb)}
       ${tbBtSection(tb)}
+      ${tbDdSection(tb)}
+      ${tbRcaSection(tb)}
       <p class="muted small audit">${t('createdBy', fmtTime(tb.NgayTao), tb.NguoiTao || '—')}<br>${t('updatedBy', fmtTime(tb.NgaySua), tb.NguoiSua || '—')}</p>`,
-    after: () => { loadTbScHistory(tb.ID); loadTbBtHistory(tb.ID); loadTbKtHistory(tb.ID); if (GC_KIEU.includes(tb.KieuGioChay) || gcOfTb(tb.ID).length) loadTbGcHistory(tb.ID); }
+    after: () => { loadTbScHistory(tb.ID); loadTbBtHistory(tb.ID); loadTbKtHistory(tb.ID); if (GC_KIEU.includes(tb.KieuGioChay) || gcOfTb(tb.ID).length) loadTbGcHistory(tb.ID); loadTbDdHistory(tb.ID); }
   };
 }
 
@@ -1007,7 +1025,7 @@ function reasonKey(r) {
   return ({ REQUIRED: 'eRequired', INVALID_CODE: 'eCode', BAD_YEAR: 'eYear', BAD_NUMBER: 'eNumber', BAD_LINK: 'eLink',
     NOT_FOUND: 'eIdNotFound', DUPLICATE: 'eDupCode', BAD_CODE: 'eBadCode', SYSTEM_CODE: 'eSystemCode', MIN_GT_MAX: 'eMinMax',
     BAD_TIME: 'eTime', FUTURE: 'eFuture', TIME_ORDER: 'eTimeOrder', RETIRED: 'eRetired', BAD_DATE: 'eDate',
-    NOT_IN_USE: 'ktNotInUse', SHIFT_DATE: 'ktShiftDateErr', NOT_TRACKED: 'gcNotTracked' })[r] || 'eInvalid';
+    NOT_IN_USE: 'ktNotInUse', SHIFT_DATE: 'ktShiftDateErr', NOT_TRACKED: 'gcNotTracked', BAD_EMAIL: 'eEmail' })[r] || 'eInvalid';
 }
 
 function needOnline() {
@@ -1174,6 +1192,9 @@ VIEWS.cv = () => {
   const gcT = S.data ? gcTracked() : [];
   const today = dToday();
   const gcLeft = gcT.filter(tb => !allGC().some(x => x.IDThietBi === tb.ID && x.Ngay === today)).length;
+  const ddDueN = S.data ? ddTodo().length : 0, ddAl = S.data ? ddAlarms().length : 0;
+  const rs = S.data ? rcaOpenStats() : { open: 0, late: 0 };
+  const nSug = S.data ? rcaCandidates().length : 0;
   return {
     title: 'tabWork', live: true,
     html: `
@@ -1194,6 +1215,14 @@ VIEWS.cv = () => {
         <a class="menu-item" href="#/gc">${ic('gauge', 'mi')}
           <div class="mi-text">${t('runHours')}<span class="mi-desc">${t('hoursDesc')}</span></div>
           ${gcLeft ? `<span class="badge kt-TODO">${gcLeft}</span>` : ''}
+          ${ic('chev', 'mi-chev')}</a>
+        <a class="menu-item" href="#/dd" data-act="ddTabGo" data-t="${ddAl ? 'CB' : 'CAN'}">${ic('pulse', 'mi')}
+          <div class="mi-text">${t('predictive')}<span class="mi-desc">${t('ddDesc')}</span></div>
+          ${ddDueN ? `<span class="badge kh-DENHAN">${ddDueN}</span>` : ''}${ddAl ? `<span class="badge dd-D">${ddAl}</span>` : ''}
+          ${ic('chev', 'mi-chev')}</a>
+        <a class="menu-item" href="#/rca" data-act="rcaTabGo" data-t="${rs.late ? 'HD' : 'MO'}">${ic('target', 'mi')}
+          <div class="mi-text">${t('rca')}<span class="mi-desc">${nSug ? `<span class="warn-t">${t('rcaSugN', nSug)}</span>` : t('rcaDesc')}</span></div>
+          ${rs.open ? `<span class="badge rc-KHACPHUC">${rs.open}</span>` : ''}${rs.late ? `<span class="badge kh-QUAHAN">${rs.late}</span>` : ''}
           ${ic('chev', 'mi-chev')}</a>
       </div>`
   };
@@ -1514,6 +1543,8 @@ function viewScDetail(so) {
   }
   const canEdit = ql || SC_KTV_EDIT.includes(st);
   const canCancel = SC_OPEN.includes(st) && (ql || st === 'MOI');
+  // Phân tích RCA: phiếu chưa hủy, chưa có RCA, không nằm trong gợi ý (gợi ý đã có nút riêng)
+  const canRca = st !== 'HUY' && !rcaOfSc(sc.SoPhieu).some(r => r.TrangThai !== 'HUY') && !rcaSuggest(sc);
 
   const notices = [];
   if (st === 'CHOVT') notices.push(`<div class="notice wait">${ic('pause')}<div>${t('scWaitingFor', sc.LyDoCho || '')}</div></div>`);
@@ -1536,14 +1567,16 @@ function viewScDetail(so) {
       </section>
       ${notices.join('')}
       ${scSourceLink(sc.PhieuNguon)}
+      ${scRcaBlock(sc)}
       ${tb ? `<a class="card tb-link ${statusCls(tb.TrangThai)}" href="#/tb/${encodeURIComponent(tb.ID)}">
           <div class="grow"><div class="mini-top"><span class="tb-id">${esc(tb.ID)}</span>${tb.MaNhaMay ? `<span class="tb-ma">${esc(tb.MaNhaMay)}</span>` : ''}</div>
             ${bi(tb.TenMay, tb.TenMayZH, 'tb-name')}${dmBi('KHUVUC', tb.ViTri, 'meta')}</div>
           ${pill(tb.TrangThai)}${ic('chev', 'mi-chev')}</a>`
         : `<div class="card pad slim"><span class="tb-id">${esc(sc.IDThietBi)}</span></div>`}
-      ${(canEdit || canCancel) ? `<div class="actions-row">
+      ${(canEdit || canCancel || canRca) ? `<div class="actions-row">
         ${canEdit ? `<a class="btn sm" href="#/sc/${enc}/sua">${ic('edit')}${t('edit')}</a>` : ''}
         ${canCancel ? `<button class="btn sm" data-act="scOp" data-op="huy" data-so="${esc(sc.SoPhieu)}">${ic('ban')}${t('scDoHuy')}</button>` : ''}
+        ${canRca ? `<a class="btn sm" href="#/rca-moi/${enc}">${ic('target')}${t('rcaDo')}</a>` : ''}
       </div>` : ''}
       <section class="card">
         <div class="card-h">${ic('log')}${t('scProgress')}</div>
@@ -1637,6 +1670,7 @@ function scSourceLink(src) {
   if (!src) return '';
   if (/^BT-/i.test(src)) return `<a class="notice src-link" href="#/bt/${encodeURIComponent(src)}">${ic('checklist')}<div>${t('scFromBt', src)}</div>${ic('chev')}</a>`;
   if (/^KT-/i.test(src)) return `<a class="notice src-link" href="#/kt/${encodeURIComponent(src)}">${ic('checklist')}<div>${t('scFromKt', src)}</div>${ic('chev')}</a>`;
+  if (/^DD-/i.test(src)) return `<a class="notice src-link" href="#/dd/${encodeURIComponent(src)}">${ic('pulse')}<div>${t('scFromDd', src)}</div>${ic('chev')}</a>`;
   return `<div class="notice">${ic('info')}<div>${t('scFromSrc', src)}</div></div>`;
 }
 
@@ -1656,6 +1690,7 @@ function viewScForm(mode, so, tbId, src) {
   const nowTs = tsNow();
   const srcBt = mode === 'new' && src ? btBySo(src) : null;
   const srcKt = mode === 'new' && src && !srcBt ? ktBySo(src) : null;
+  const srcDd = mode === 'new' && src && !srcBt && !srcKt ? ddBySo(src) : null;
   const F = S.scForm = cur ? Object.assign({}, cur) : {
     IDThietBi: pre && pre.TrangThai !== 'THANHLY' ? pre.ID : '', MoTa: '', NguoiBao: '', TGBao: nowTs, MayDung: '1', TGDung: nowTs, GhiChu: ''
   };
@@ -1672,6 +1707,13 @@ function viewScForm(mode, so, tbId, src) {
     F.PhieuNguon = srcKt.SoPhieu;
     F.MoTa = scMoTaFromKt(srcKt);
     F.NguoiBao = srcKt.NguoiKiemTra || S.name;
+    F.MayDung = '0';
+    F.TGDung = '';
+  } else if (srcDd) {
+    // Tạo từ phiếu đo dự đoán có điểm mức C/D
+    F.PhieuNguon = srcDd.SoPhieu;
+    F.MoTa = scMoTaFromDd(srcDd);
+    F.NguoiBao = srcDd.NguoiDo || S.name;
     F.MayDung = '0';
     F.TGDung = '';
   }
@@ -4898,17 +4940,2086 @@ async function gsSave(btn) {
   } finally { if (btn.isConnected) { btn.disabled = false; btn.classList.remove('loading'); } }
 }
 
+/* ===================== PHIÊN 5: HỢP ĐỒNG · BẢO TRÌ DỰ ĐOÁN · RCA ===================== */
+
+/* ---- Dùng chung ---- */
+function cfgInt(k, d) { const v = String((S.data && S.data.cauHinh && S.data.cauHinh[k]) || '').trim(); return /^\d+$/.test(v) ? Number(v) : d; }
+/** Danh sách máy cho hộp chọn (bỏ máy thanh lý) */
+function tbPickItems(filter) {
+  return allTb().filter(x => x.TrangThai !== 'THANHLY' && (!filter || filter(x)))
+    .sort((a, b) => String(a.ID).localeCompare(String(b.ID), 'en', { numeric: true }))
+    .map(x => ({ v: x.ID, vi: `${x.ID} · ${x.TenMay}`, zh: x.TenMayZH || dmZh('NHOMTB', x.NhomTB),
+      sub: [x.MaNhaMay, dmVi('KHUVUC', x.ViTri)].filter(Boolean).join(' · ') }));
+}
+/** Hộp chọn khu vực / nhóm máy dùng chung cho bộ lọc danh sách → Promise<value | undefined> */
+function pickKvNhom(k, cur) {
+  const loai = k === 'kv' ? 'KHUVUC' : 'NHOMTB', all = tr(k === 'kv' ? 'allAreas' : 'allGroups');
+  return picker({ title: k === 'kv' ? 'fViTri' : 'fNhomTB', value: cur,
+    items: [{ v: '', vi: all.vi, zh: all.zh }].concat(dmList(loai, true).map(d => ({ v: d.Ma, vi: d.TenVI, zh: d.TenZH }))) });
+}
+function tbMatchF(tb, f, extra) {
+  if (f.kv && (!tb || tb.ViTri !== f.kv)) return false;
+  if (f.nhom && (!tb || tb.NhomTB !== f.nhom)) return false;
+  const n = norm(f.q);
+  return !n || norm([tb && tb.ID, tb && tb.TenMay, tb && tb.TenMayZH, tb && tb.MaNhaMay].concat(extra || []).join(' ')).includes(n);
+}
+function stamp() { const d = new Date(); return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`; }
+/** Liên kết trong kết quả API lỗi INVALID → hiển thị dưới ô, trả số ô đã hiện */
+function showErrs(form, errors, nameOf) {
+  let shown = 0;
+  errors.forEach(x => {
+    const key = x.reason === 'TIME_ORDER' ? 'eTimeAfter' : reasonKey(x.reason);
+    const args = x.reason === 'TIME_ORDER' && x.after ? [nameOf(x.after)] : [];
+    if (scFieldErr(form, x.field + (x.line ? ':' + x.line : ''), key, args) || scFieldErr(form, x.field, key, args)) shown++;
+    else toast(tr('eFieldX', [nameOf(x.field, x), tr(key, args)]), 'err');
+  });
+  if (shown) toast('eInvalid', 'err');
+  const first = $('.has-err', form);
+  if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+/* ---------------------- Hợp đồng bảo trì thuê ngoài ---------------------- */
+/* HD0001…: nhà thầu + phạm vi + máy áp dụng + thời hạn. Trạng thái tính theo ngày (giống backend hdStatus_):
+ * còn hạn · sắp hết hạn (còn ≤ NhacTruoc ngày) · hết hạn · chưa hiệu lực · đã ký tiếp · không ký tiếp. */
+const HD_ORDER = ['HETHAN', 'SAPHET', 'CHUAHL', 'CONHAN', 'DAKYTIEP', 'KETTHUC'];
+const HD_DUE = ['HETHAN', 'SAPHET'];
+const HD_TABS = [{ id: 'CAN', key: 'hdTabDue' }, { id: 'HL', key: 'hdTabActive' }, { id: 'ALL', key: 'scTabAll' }];
+
+function allHD() { return (S.data && S.data.hopDong) || []; }
+function hdByMa(ma) { const k = String(ma || '').toUpperCase(); return allHD().find(x => String(x.MaHD).toUpperCase() === k) || null; }
+function hdNhacDef() { return String(cfgInt('HD_NhacTruoc', 60)); }
+function hdIds(h) { return String((h && h.DSThietBi) || '').split(/[,;\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean); }
+function hdStatus(h, today) {
+  today = today || dToday();
+  const left = h.NgayKetThuc ? dDiff(today, h.NgayKetThuc) : null;
+  if (h.TrangThai === 'KETTHUC') return { st: 'KETTHUC', left };
+  if (h.TrangThai === 'DAKYTIEP') return { st: 'DAKYTIEP', left };
+  if (h.NgayBatDau && today < h.NgayBatDau) return { st: 'CHUAHL', left };
+  if (left === null) return { st: 'CONHAN', left };
+  if (left < 0) return { st: 'HETHAN', left };
+  const n = /^\d+$/.test(String(h.NhacTruoc || '')) ? Number(h.NhacTruoc) : 60;
+  return { st: left <= n ? 'SAPHET' : 'CONHAN', left };
+}
+function hdSort(a, b) {
+  const x = hdStatus(a), y = hdStatus(b);
+  return HD_ORDER.indexOf(x.st) - HD_ORDER.indexOf(y.st) || String(a.NgayKetThuc).localeCompare(String(b.NgayKetThuc)) || String(a.MaHD).localeCompare(String(b.MaHD));
+}
+function hdDue() { return allHD().filter(h => HD_DUE.includes(hdStatus(h).st)).sort(hdSort); }
+function hdOfTb(id) { const k = String(id).toUpperCase(); return allHD().filter(h => hdIds(h).includes(k)).sort(hdSort); }
+function hdPill(st) { return `<span class="pill hd-${esc(st)}">${t('hd' + st)}</span>`; }
+/** "Còn 45 ngày" · "Quá hạn 3 ngày" · "Hiệu lực từ 01/11/2026" */
+function hdLeftTr(h, s) {
+  if (s.st === 'CHUAHL') return tr('hdFrom', [fmtDate(h.NgayBatDau)]);
+  if (s.st === 'KETTHUC') return tr('hdKETTHUC');
+  if (s.left === null) return { vi: '', zh: '' };
+  if (s.left < 0) return tr('hdLate', [-s.left]);
+  if (s.left === 0) return tr('hdEndsToday');
+  return tr('hdLeftN', [s.left]);
+}
+function hdLeftHtml(h, s) {
+  const x = hdLeftTr(h, s);
+  if (!x.vi) return '';
+  return `<span class="due hd-${esc(s.st)}">${ic('clock')}${bi(x.vi, x.zh)}</span>`;
+}
+/** Thời hạn: "12 tháng" nếu tròn tháng, không thì số ngày */
+function hdDurTr(h) {
+  if (!h.NgayBatDau || !h.NgayKetThuc) return { vi: '', zh: '' };
+  const end1 = dAdd(h.NgayKetThuc, 1, 'NGAY');
+  for (let m = 1; m <= 120; m++) if (dAdd(h.NgayBatDau, m, 'THANG') === end1) return tr('nMonths', [m]);
+  return tr('nDays', [dDiff(h.NgayBatDau, end1)]);
+}
+function hdNhaThauMatch(a, b) {
+  const x = norm(a), y = norm(b);
+  return !!x && !!y && (x.includes(y) || y.includes(x));
+}
+/** Kế hoạch bảo trì do nhà thầu của hợp đồng làm (trên các máy trong hợp đồng; không khai máy → mọi máy) */
+function hdPlans(h) {
+  const ids = hdIds(h);
+  return allKH().filter(k => hdNhaThauMatch(k.NhaThau, h.NhaThau) && (!ids.length || ids.includes(String(k.IDThietBi).toUpperCase())));
+}
+/** Phiếu bảo trì / sửa chữa nhà thầu đã làm trong thời hạn hợp đồng (trong dữ liệu đã tải) */
+function hdWork(h) {
+  const ids = hdIds(h);
+  const inIds = id => !ids.length || ids.includes(String(id).toUpperCase());
+  const inTerm = ts => { const d = String(ts || '').slice(0, 10); return d && d >= h.NgayBatDau && d <= h.NgayKetThuc; };
+  const bt = allBT().filter(x => hdNhaThauMatch(x.NhaThau, h.NhaThau) && inIds(x.IDThietBi) && inTerm(x.TGKetThuc)).sort(btSortDesc);
+  const sc = allSC().filter(x => x.TrangThaiPhieu !== 'HUY' && hdNhaThauMatch(x.NhaThau, h.NhaThau) && inIds(x.IDThietBi) && inTerm(x.TGHoanThanh || x.TGBao)).sort(scSortDesc);
+  return { bt, sc };
+}
+function hdNames() { return uniqueRecent('NhaThau', allHD().map(h => h.NhaThau).concat(allKH().map(k => k.NhaThau), allBT().map(b => b.NhaThau))); }
+
+/* ---- Trang chủ ---- */
+function homeHdCard() {
+  const due = hdDue();
+  const nLate = due.filter(h => hdStatus(h).st === 'HETHAN').length;
+  return `<section class="card">
+    <div class="card-h">${ic('file', nLate ? 'bad' : (due.length ? 'warn' : 'ok'))}${t('contractsDue')}<span class="count">${due.length}</span></div>
+    ${due.length ? `<div class="mini-list">${due.slice(0, 5).map(hdMini).join('')}</div>`
+      : `<div class="empty ok small">${ic('check')}${allHD().length ? t('hdNoDue') : t('hdNone')}</div>`}
+    <div class="card-f">
+      ${isQL() ? `<a class="btn sm" href="#/hd-moi">${ic('plus')}${t('hdAdd')}</a>` : ''}
+      <span class="sp"></span>
+      <a class="link" href="#/hd" data-act="hdTabGo" data-t="${due.length ? 'CAN' : 'HL'}">${t('hdViewAll')}</a>
+    </div>
+  </section>`;
+}
+function hdMini(h) {
+  const s = hdStatus(h);
+  return `<a class="mini hd-${esc(s.st)}" href="#/hd/${encodeURIComponent(h.MaHD)}">
+    <div class="mini-main">
+      <div class="mini-top"><span class="sc-no">${esc(h.MaHD)}</span><span class="muted small ell">${esc(h.NhaThau)}</span></div>
+      <div class="kh-name">${bi(h.TenVI, h.TenZH)}</div>
+      <div class="sc-meta">${hdLeftHtml(h, s)}<span class="muted small">${esc(fmtDate(h.NgayKetThuc))}</span></div>
+    </div>
+    ${hdPill(s.st)}
+  </a>`;
+}
+
+/* ---- Danh sách ---- */
+function hdFiltered() {
+  const f = S.hdf;
+  const today = dToday();
+  const n = norm(f.q);
+  return allHD().filter(h => {
+    const s = hdStatus(h, today);
+    if (f.tab === 'CAN' && !HD_DUE.includes(s.st)) return false;
+    if (f.tab === 'HL' && !(['CONHAN', 'SAPHET', 'CHUAHL'].includes(s.st) || (s.st === 'DAKYTIEP' && s.left !== null && s.left >= 0))) return false;
+    if (n) {
+      const names = hdIds(h).map(id => { const tb = tbById(id); return tb ? tb.TenMay : ''; });
+      if (!norm([h.MaHD, h.SoHopDong, h.TenVI, h.TenZH, h.NhaThau, h.LienHe, h.PhamVi, h.DSThietBi].concat(names).join(' ')).includes(n)) return false;
+    }
+    return true;
+  }).sort(hdSort);
+}
+function viewHdList() {
+  if (!S.data) return loadingView();
+  const f = S.hdf;
+  const nDue = hdDue().length;
+  return {
+    live: true, restoreScroll: true, title: 'hdList', back: 'them', tab: 'them',
+    html: `
+      <div class="toolbar sticky">
+        <div class="seg sc-tabs">${HD_TABS.map(x => {
+          const lb = tr(x.key);
+          const n = x.id === 'CAN' ? nDue : 0;
+          return `<a data-act="hdTab" data-t="${x.id}" class="${x.id === f.tab ? 'on' : ''}">${bi(lb.vi, lb.zh)}${n ? `<span class="tcount hd-SAPHET">${n}</span>` : ''}</a>`;
+        }).join('')}</div>
+        <div class="search">${ic('search')}<input type="search" id="hd-q" value="${esc(f.q)}" placeholder="${esc(tp('hdSearch'))}" autocomplete="off"></div>
+      </div>
+      <div class="list-bar"><span id="hd-count" class="muted"></span><span class="sp"></span>
+        <button class="link" data-act="hdCsv">${t('exportCsv')}</button></div>
+      <div id="hd-list" class="tb-list"></div>
+      ${isQL() ? `<a class="fab" href="#/hd-moi" aria-label="${esc(tp('hdAdd'))}">${ic('plus')}</a>` : ''}`,
+    after: () => {
+      drawHdList();
+      $('#hd-q').addEventListener('input', debounce(e => { S.hdf.q = e.target.value; drawHdList(); }, 150));
+    }
+  };
+}
+function drawHdList() {
+  const box = $('#hd-list');
+  if (!box) return;
+  const list = hdFiltered();
+  $('#hd-count').innerHTML = t('hdN', list.length);
+  box.classList.toggle('bare', !list.length);
+  box.innerHTML = list.length ? list.map(hdItem).join('')
+    : `<div class="empty${S.hdf.tab === 'CAN' && allHD().length ? ' ok' : ''}">${ic(S.hdf.tab === 'CAN' && allHD().length ? 'checkCircle' : 'file')}${
+      allHD().length ? (S.hdf.q ? t('noResult') : t(S.hdf.tab === 'CAN' ? 'hdNoDue' : 'noResult')) : t('hdNone')}${
+      isQL() && !allHD().length ? `<a class="btn primary" href="#/hd-moi">${ic('plus')}${t('hdAdd')}</a>` : ''}</div>`;
+}
+function hdItem(h) {
+  const s = hdStatus(h);
+  const ids = hdIds(h);
+  return `<a class="sc-item hd-${esc(s.st)}" href="#/hd/${encodeURIComponent(h.MaHD)}">
+    <div class="tb-top"><span class="sc-no">${esc(h.MaHD)}</span>${h.SoHopDong ? `<span class="tb-ma">${esc(h.SoHopDong)}</span>` : ''}<span class="sp"></span>${hdPill(s.st)}</div>
+    <div class="kh-name">${bi(h.TenVI, h.TenZH)}</div>
+    <div class="hd-nt">${ic('user')}<span>${esc(h.NhaThau)}</span></div>
+    <div class="sc-meta">${hdLeftHtml(h, s)}<span class="muted small">${esc(fmtDate(h.NgayBatDau))} → ${esc(fmtDate(h.NgayKetThuc))}</span>
+      <span class="sp"></span>${ids.length ? `<span class="muted small">${t('nDevices', ids.length)}</span>` : ''}</div>
+  </a>`;
+}
+const HD_CSV = [
+  ['MaHD', 'Mã', '编号'], ['SoHopDong', 'Số hợp đồng', '合同编号'], ['TenVI', 'Hợp đồng', '合同名称'], ['TenZH', 'Tên (Trung)', '名称(中文)'],
+  ['NhaThau', 'Nhà thầu', '外协单位'], ['LienHe', 'Liên hệ', '联系人'], ['PhamVi', 'Phạm vi', '维保范围'], ['TanSuat', 'Tần suất', '维保频次'],
+  ['DSThietBi', 'Máy áp dụng (ID)', '适用设备(ID)'], ['_TenMay', 'Tên máy', '设备名称'], ['NgayBatDau', 'Bắt đầu', '开始日期'],
+  ['NgayKetThuc', 'Kết thúc', '结束日期'], ['_Con', 'Còn (ngày)', '剩余(天)'], ['_TrangThai', 'Trạng thái', '状态'], ['NhacTruoc', 'Nhắc trước (ngày)', '提前提醒(天)'],
+  ['LinkTaiLieu', 'Tài liệu', '资料链接'], ['HopDongTruoc', 'Ký tiếp từ', '续签自'], ['HopDongSau', 'Ký tiếp sang', '续签为'],
+  ['LyDoKetThuc', 'Lý do không ký tiếp', '不续签原因'], ['GhiChu', 'Ghi chú', '备注']
+];
+function exportHdCsv() {
+  const rows = [csvHead(HD_CSV)].concat(hdFiltered().map(h => {
+    const s = hdStatus(h);
+    return HD_CSV.map(([f]) => {
+      if (f === '_TenMay') return hdIds(h).map(id => { const tb = tbById(id); return tb ? tb.TenMay : id; }).join('; ');
+      if (f === '_Con') return s.left === null ? '' : s.left;
+      if (f === '_TrangThai') return tr('hd' + s.st).vi;
+      return h[f] || '';
+    });
+  }));
+  downloadCsv(`hop-dong-bao-tri_${stamp()}.csv`, rows);
+}
+
+/* ---- Chi tiết ---- */
+VIEWS.hd = p => {
+  if (p[1] && p[2] === 'sua') return viewHdForm('edit', p[1]);
+  if (p[1]) return viewHdDetail(p[1]);
+  return viewHdList();
+};
+VIEWS['hd-moi'] = p => viewHdForm(p[1] ? 'renew' : 'new', p[1] || null);
+
+function viewHdDetail(ma) {
+  if (!S.data) return loadingView();
+  const h = hdByMa(ma);
+  if (!h) return { title: 'hdDetail', back: 'hd', tab: 'them', html: `<div class="empty">${ic('search')}${t('hdNotFound', ma)}</div>` };
+  const s = hdStatus(h);
+  const ql = isQL();
+  const enc = encodeURIComponent(h.MaHD);
+  const ids = hdIds(h);
+  const plans = hdPlans(h);
+  const work = hdWork(h);
+  const ST = plans.length ? khStatuses() : null;
+  const prev = h.HopDongTruoc ? hdByMa(h.HopDongTruoc) : null;
+  const next = h.HopDongSau ? hdByMa(h.HopDongSau) : null;
+  const x = hdLeftTr(h, s);
+  const kv = (key, val, raw) => (val === '' || val === null || val === undefined) ? '' :
+    `<div class="kv"><div class="k">${t(key)}</div><div class="v">${raw ? val : esc(val)}</div></div>`;
+  const kvCol = (key, val) => val ? `<div class="kv col"><div class="k">${t(key)}</div><div class="v pre">${esc(val)}</div></div>` : '';
+  const link = h.LinkTaiLieu && /^https?:\/\//i.test(h.LinkTaiLieu) ? h.LinkTaiLieu : '';
+  const dur = hdDurTr(h);
+  return {
+    live: true, title: 'hdDetail', back: 'hd', tab: 'them',
+    html: `
+      <section class="card hero hd-${esc(s.st)}">
+        <div class="hero-main">
+          <div class="hero-ids"><span class="sc-no big">${esc(h.MaHD)}</span>${hdPill(s.st)}</div>
+          ${bi(h.TenVI, h.TenZH, 'hero-name')}
+          <div class="hd-nt big">${ic('user')}<span>${esc(h.NhaThau)}</span></div>
+          ${x.vi ? `<div class="due-big hd-${esc(s.st)}">${ic('clock')}${bi(x.vi, x.zh)}</div>` : ''}
+          <div class="muted small">${esc(fmtDate(h.NgayBatDau))} → ${esc(fmtDate(h.NgayKetThuc))}${dur.vi ? ` · ${esc(dur.vi)}` : ''}</div>
+        </div>
+      </section>
+      ${next ? `<a class="notice src-link" href="#/hd/${encodeURIComponent(next.MaHD)}">${ic('repeat')}<div>${t('hdRenewedTo', next.MaHD, fmtDate(next.NgayBatDau), fmtDate(next.NgayKetThuc))}</div>${ic('chev')}</a>` : ''}
+      ${h.TrangThai === 'DAKYTIEP' && !next ? `<div class="notice">${ic('repeat')}<div>${t('hdDAKYTIEP')}</div></div>` : ''}
+      ${prev ? `<a class="notice src-link" href="#/hd/${encodeURIComponent(prev.MaHD)}">${ic('undo')}<div>${t('hdRenewedFrom', prev.MaHD)}</div>${ic('chev')}</a>` : ''}
+      ${h.TrangThai === 'KETTHUC' ? `<div class="notice warn">${ic('ban')}<div>${t('hdEndedNote', h.LyDoKetThuc || '')}</div></div>` : ''}
+      ${HD_DUE.includes(s.st) ? `<div class="notice warn">${ic('alert')}<div>${t(s.st === 'HETHAN' ? 'hdLateNote' : 'hdSoonNote')}</div></div>` : ''}
+      ${ql ? `<div class="actions-row">
+        <a class="btn sm" href="#/hd/${enc}/sua">${ic('edit')}${t('edit')}</a>
+        ${h.TrangThai !== 'DAKYTIEP' ? `<a class="btn sm${HD_DUE.includes(s.st) ? ' primary' : ''}" href="#/hd-moi/${enc}">${ic('repeat')}${t('hdRenew')}</a>` : ''}
+        ${!h.TrangThai ? `<button class="btn sm" data-act="hdEnd" data-ma="${esc(h.MaHD)}">${ic('ban')}${t('hdEnd')}</button>` : ''}
+        ${h.TrangThai === 'KETTHUC' ? `<button class="btn sm" data-act="hdRestore" data-ma="${esc(h.MaHD)}">${ic('undo')}${t('hdRestore')}</button>` : ''}
+      </div>` : ''}
+      <section class="card">
+        <div class="card-h">${ic('info')}${t('info')}</div>
+        ${kv('hdSoHD', h.SoHopDong)}
+        ${kv('hdNhaThau', h.NhaThau)}
+        ${kv('hdLienHe', h.LienHe)}
+        ${kv('hdTanSuat', h.TanSuat)}
+        ${kv('hdTerm', `${esc(fmtDate(h.NgayBatDau))} → ${esc(fmtDate(h.NgayKetThuc))}${dur.vi ? `<div class="small muted">${biTr(dur)}</div>` : ''}`, true)}
+        ${kv('hdNhacTruoc', t('nDaysBefore', h.NhacTruoc || '60'), true)}
+        ${kvCol('hdPhamVi', h.PhamVi)}
+        ${kv('fLinkTaiLieu', link ? `<a href="${esc(link)}" target="_blank" rel="noopener" class="link">${t('openDocs')}</a>` : '', true)}
+        ${kvCol('fGhiChu', h.GhiChu)}
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('device')}${t('hdDevices')}<span class="count">${ids.length}</span></div>
+        ${ids.length ? `<div class="mini-list">${ids.map(id => { const tb = tbById(id); return tb ? miniItem(tb) : `<div class="mini"><span class="tb-id">${esc(id)}</span></div>`; }).join('')}</div>`
+          : `<div class="empty small">${t('hdNoDevices')}</div>`}
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('calendar')}${t('hdPlans')}<span class="count">${plans.length}</span></div>
+        ${plans.length ? `<div class="mini-list">${plans.sort(khSortBy(ST)).map(k => khMini(k, ST.get(k.MaKH), true)).join('')}</div>`
+          : `<div class="empty small">${t('hdNoPlans')}</div>`}
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('checklist')}${t('hdWork')}<span class="count">${work.bt.length + work.sc.length}</span></div>
+        <div class="sc-sum">${t('hdWorkSum', work.bt.length, work.sc.length)}</div>
+        ${work.bt.length || work.sc.length ? `<div class="mini-list">${work.bt.slice(0, 20).map(b => btMini(b, true)).join('')}${work.sc.slice(0, 20).map(x => scMini(x, true)).join('')}</div>` : ''}
+        <p class="muted small pad-x">${t('hdWorkHint')}</p>
+      </section>
+      <p class="muted small audit">${t('createdBy', fmtTime(h.NgayTao), h.NguoiTao || '—')}<br>${t('updatedBy', fmtTime(h.NgaySua), h.NguoiSua || '—')}</p>
+      ${ql ? `<button class="btn block danger-outline" data-act="hdDelete" data-ma="${esc(h.MaHD)}">${ic('trash')}${t('hdDelete')}</button>` : ''}`
+  };
+}
+
+/* ---- Biểu mẫu: thêm (new) · ký tiếp (renew) · sửa (edit) ---- */
+function viewHdForm(mode, ma) {
+  if (!isQL()) return forbiddenView('hd');
+  if (!S.data) return loadingView();
+  const cur = ma ? hdByMa(ma) : null;
+  if (ma && !cur) return { title: 'hdDetail', back: 'hd', tab: 'them', html: `<div class="empty">${t('hdNotFound', ma)}</div>` };
+  if (mode === 'renew' && cur.TrangThai === 'DAKYTIEP') return { title: 'hdRenew', back: 'hd/' + encodeURIComponent(cur.MaHD), tab: 'them', html: `<div class="notice warn">${ic('alert')}<div>${t('eBadState')}</div></div>` };
+  const key = mode + ':' + (cur ? cur.MaHD : '');
+  if (!S.hdForm || S.hdForm.key !== key) {
+    let h;
+    if (mode === 'edit') h = Object.assign({}, cur);
+    else if (mode === 'renew') {
+      // Hợp đồng mới nối tiếp: bắt đầu ngay sau ngày kết thúc cũ, cùng thời hạn
+      const start = dAdd(cur.NgayKetThuc, 1, 'NGAY');
+      const end1 = dAdd(cur.NgayKetThuc, 1, 'NGAY');
+      let end = '';
+      for (let m = 1; m <= 120 && !end; m++) if (dAdd(cur.NgayBatDau, m, 'THANG') === end1) end = dAdd(dAdd(start, m, 'THANG'), -1, 'NGAY');
+      if (!end) end = dAdd(start, dDiff(cur.NgayBatDau, cur.NgayKetThuc), 'NGAY');
+      h = Object.assign({}, cur, { SoHopDong: '', NgayBatDau: start, NgayKetThuc: end, LinkTaiLieu: '', GhiChu: '' });
+    } else {
+      const today = dToday();
+      h = { TenVI: '', TenZH: '', SoHopDong: '', NhaThau: '', LienHe: '', PhamVi: '', TanSuat: '', DSThietBi: '',
+        NgayBatDau: today, NgayKetThuc: dAdd(dAdd(today, 12, 'THANG'), -1, 'NGAY'), NhacTruoc: hdNhacDef(), LinkTaiLieu: '', GhiChu: '' };
+    }
+    S.hdForm = { key, mode, orig: cur ? cur.NgaySua : undefined, ma: cur ? cur.MaHD : '', h, ids: new Set(hdIds(h)) };
+  }
+  const F = S.hdForm, H = F.h;
+  const back = cur ? 'hd/' + encodeURIComponent(cur.MaHD) : 'hd';
+  const txt = (f, key, req, attrs, ph) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)}${req ? ' <b class="req">*</b>' : ''}</span>
+    <input data-hf="${f}" value="${esc(H[f] || '')}" ${attrs || ''} ${ph ? `placeholder="${esc(tp(ph))}"` : ''}><span class="fe"></span></label>`;
+  const area = (f, key, ph) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)}</span>
+    <textarea data-hf="${f}" rows="3" maxlength="2000" ${ph ? `placeholder="${esc(tp(ph))}"` : ''}>${esc(H[f] || '')}</textarea><span class="fe"></span></label>`;
+  return {
+    title: { new: 'hdNewTitle', renew: 'hdRenew', edit: 'hdEditTitle' }[mode], back, tab: 'them', noPtr: true,
+    html: `
+      <form id="f-hd" class="form" autocomplete="off" novalidate>
+        ${mode === 'renew' ? `<div class="notice">${ic('repeat')}<div>${t('hdRenewNote', cur.MaHD)}</div></div>` : ''}
+        ${mode === 'edit' ? `<div class="card pad slim"><span class="sc-no big">${esc(cur.MaHD)}</span></div>` : ''}
+        <section class="card pad">
+          <div class="card-h flat">${ic('file')}${t('hdContract')}</div>
+          ${txt('TenVI', 'hdTenVI', true, 'maxlength="200"', 'hdTenPh')}
+          ${txt('TenZH', 'hdTenZH', false, 'maxlength="200" lang="zh"')}
+          ${txt('SoHopDong', 'hdSoHD', false, 'maxlength="100"', 'hdSoHDPh')}
+          ${txt('NhaThau', 'hdNhaThau', true, 'maxlength="150" list="dl-hdnt"')}
+          ${txt('LienHe', 'hdLienHe', false, 'maxlength="300"', 'hdLienHePh')}
+          ${txt('TanSuat', 'hdTanSuat', false, 'maxlength="200"', 'hdTanSuatPh')}
+          ${area('PhamVi', 'hdPhamVi', 'hdPhamViPh')}
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('device')}${t('hdDevices')}</div>
+          <div class="fld" data-fld="DSThietBi"><button type="button" class="select" data-act="hdPickTb">${hdTbLabel()}${ic('down')}</button><span class="fe"></span></div>
+          <div id="hd-tbs" class="kh-tbs">${hdTbChips()}</div>
+          <p class="muted small">${t('hdDevicesHint')}</p>
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('calendar')}${t('hdTerm')}</div>
+          <div class="grid2">
+            <label class="fld" data-fld="NgayBatDau"><span class="lb">${t('hdStart')} <b class="req">*</b></span><input type="date" data-hf="NgayBatDau" value="${esc(H.NgayBatDau)}"><span class="fe"></span></label>
+            <label class="fld" data-fld="NgayKetThuc"><span class="lb">${t('hdEnd2')} <b class="req">*</b></span><input type="date" data-hf="NgayKetThuc" value="${esc(H.NgayKetThuc)}"><span class="fe"></span></label>
+          </div>
+          <div class="row gap wrap hd-dur">${[6, 12, 24, 36].map(m => `<button type="button" class="chip" data-act="hdDur" data-m="${m}">+${biTr(tr('nMonths', [m]))}</button>`).join('')}</div>
+          <span class="muted small" id="hd-dur-now">${biTr(hdDurTr(H))}</span>
+          <label class="fld" data-fld="NhacTruoc"><span class="lb">${t('hdNhacTruoc')}</span>
+            <div class="ck-num"><input data-hf="NhacTruoc" value="${esc(H.NhacTruoc || '')}" inputmode="numeric" maxlength="3"><span class="ck-unit">${t('daysUnit')}</span></div>
+            <span class="fe"></span><span class="muted small">${t('hdNhacHint')}</span></label>
+        </section>
+        <section class="card pad">
+          ${txt('LinkTaiLieu', 'fLinkTaiLieu', false, 'type="url" inputmode="url" maxlength="500" placeholder="https://drive.google.com/…"')}
+          ${area('GhiChu', 'fGhiChu')}
+        </section>
+        ${datalist('dl-hdnt', hdNames())}
+        <div class="form-actions">
+          <a class="btn" href="#/${back}">${t('cancel')}</a>
+          <button class="btn primary" type="submit">${ic('check')}${t(mode === 'renew' ? 'hdRenewSave' : 'save')}</button>
+        </div>
+      </form>`,
+    after: () => {
+      const form = $('#f-hd');
+      form.addEventListener('submit', saveHdForm);
+      form.addEventListener('input', e => {
+        clearFieldErr(e);
+        const el = e.target;
+        if (el.dataset.hf) {
+          F.h[el.dataset.hf] = el.value;
+          if (el.dataset.hf === 'NgayBatDau' || el.dataset.hf === 'NgayKetThuc') $('#hd-dur-now').innerHTML = biTr(hdDurTr(F.h));
+        }
+      });
+    }
+  };
+}
+function hdTbLabel() {
+  const n = S.hdForm ? S.hdForm.ids.size : 0;
+  return n ? `<span class="grow">${t('nSelected', n)}</span>` : `<span class="muted">${t('hdChooseTb')}</span>`;
+}
+function hdTbChips() {
+  const ids = S.hdForm ? [...S.hdForm.ids] : [];
+  return ids.sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).map(id => {
+    const tb = tbById(id);
+    return `<div class="kh-tb"><span class="tb-id">${esc(id)}</span><span class="grow small">${esc(tb ? tb.TenMay : '')}</span>
+      <button type="button" class="hbtn sm" data-act="hdTbRemove" data-id="${esc(id)}" aria-label="x">${ic('x')}</button></div>`;
+  }).join('');
+}
+const HD_FIELD_KEYS = { TenVI: 'hdTenVI', NhaThau: 'hdNhaThau', NgayBatDau: 'hdStart', NgayKetThuc: 'hdEnd2', NhacTruoc: 'hdNhacTruoc',
+  LinkTaiLieu: 'fLinkTaiLieu', DSThietBi: 'hdDevices', lyDo: 'hdEndReason' };
+function hdFieldName(f, x) { const k = HD_FIELD_KEYS[f]; const b = k ? tr(k) : { vi: f, zh: f }; return x && x.value ? { vi: b.vi + ' ' + x.value, zh: b.zh + ' ' + x.value } : b; }
+
+async function saveHdForm(ev) {
+  ev.preventDefault();
+  if (!needOnline()) return;
+  const form = ev.target;
+  const F = S.hdForm;
+  if (!F) return;
+  const H = F.h;
+  $$('.has-err', form).forEach(el => { el.classList.remove('has-err'); const fe = $('.fe', el); if (fe) fe.innerHTML = ''; });
+  let bad = false;
+  const err = (f, k, a) => { scFieldErr(form, f, k, a); bad = true; };
+  if (!String(H.TenVI || '').trim()) err('TenVI', 'eRequired');
+  if (!String(H.NhaThau || '').trim()) err('NhaThau', 'eRequired');
+  if (!H.NgayBatDau) err('NgayBatDau', 'eRequired');
+  if (!H.NgayKetThuc) err('NgayKetThuc', 'eRequired');
+  if (H.NgayBatDau && H.NgayKetThuc && H.NgayKetThuc < H.NgayBatDau) err('NgayKetThuc', 'eTimeAfter', [tr('hdStart')]);
+  if (String(H.NhacTruoc || '').trim() && (!/^\d{1,3}$/.test(String(H.NhacTruoc).trim()) || Number(H.NhacTruoc) > 365)) err('NhacTruoc', 'eNumber');
+  if (H.LinkTaiLieu && !/^https?:\/\/\S+$/i.test(String(H.LinkTaiLieu).trim())) err('LinkTaiLieu', 'eLink');
+  if (bad) { toast('eInvalid', 'err'); const first = $('.has-err', form); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+  const hd = {};
+  ['SoHopDong', 'TenVI', 'TenZH', 'NhaThau', 'LienHe', 'PhamVi', 'TanSuat', 'NgayBatDau', 'NgayKetThuc', 'NhacTruoc', 'LinkTaiLieu', 'GhiChu']
+    .forEach(f => { hd[f] = String(H[f] === undefined || H[f] === null ? '' : H[f]).trim(); });
+  hd.DSThietBi = [...F.ids];
+  const payload = { op: { new: 'create', renew: 'kytiep', edit: 'capnhat' }[F.mode], hd };
+  if (F.mode !== 'new') { payload.ma = F.ma; payload.ngaySuaCu = F.orig || ''; }
+  busy(form, true);
+  try {
+    const r = await api('hdAction', payload);
+    S.data.hopDong = r.hopDong;
+    saveCache();
+    S.hdForm = null;
+    toast(r.unchanged ? tr('scNoChange') : tr(F.mode === 'edit' ? 'saved' : (F.mode === 'renew' ? 'hdRenewed' : 'hdCreated'), [r.ma]), 'ok');
+    const detail = '#/hd/' + encodeURIComponent(r.ma);
+    if (F.mode === 'edit' && S.prevHash === detail) history.back(); else location.replace(detail);
+  } catch (e) {
+    if (e.code === 'INVALID' && e.extra && e.extra.errors) showErrs(form, e.extra.errors, hdFieldName);
+    else await hdHandleErr(e);
+  } finally { if (form.isConnected) busy(form, false); }
+}
+async function hdHandleErr(e) {
+  if (e.code === 'CONFLICT' || e.code === 'BAD_STATE') {
+    const ex = e.extra || {};
+    closeSheet();
+    if (await confirmDlg('eConflict', e.code === 'CONFLICT' ? tr('scConflictMsg', [ex.nguoiSua || '?', fmtTime(ex.ngaySua)]) : tr('eBadState'), { ok: 'reload' })) {
+      S.hdForm = null;
+      await refresh(true);
+      const p = route();
+      if (p[0] === 'hd' && p[1] && p[2]) location.replace('#/hd/' + encodeURIComponent(p[1])); else render();
+    }
+  } else if (e.code !== 'AUTH') toast(errText(e), 'err');
+}
+/** Không ký tiếp (kết thúc) — bắt buộc lý do */
+function hdEndSheet(ma) {
+  const h = hdByMa(ma);
+  if (!h || !needOnline()) return;
+  const sh = openSheet(`
+    <form id="f-hde" class="form" autocomplete="off" novalidate>
+      <div class="pk-head"><h3 class="h3">${t('hdEnd')}</h3><button type="button" class="hbtn" data-act="closeSheet">${ic('x')}</button></div>
+      <div class="muted small"><span class="sc-no">${esc(h.MaHD)}</span> · ${esc(h.NhaThau)} · ${esc(h.TenVI)}</div>
+      <label class="fld" data-fld="lyDo"><span class="lb">${t('hdEndReason')} <b class="req">*</b></span>
+        <textarea name="lyDo" rows="3" maxlength="1000" placeholder="${esc(tp('hdEndReasonPh'))}"></textarea><span class="fe"></span></label>
+      <p class="muted small">${t('hdEndHint')}</p>
+      <div class="msg" id="hde-msg"></div>
+      <button class="btn danger block" type="submit">${ic('ban')}${t('hdEnd')}</button>
+    </form>`);
+  const form = $('#f-hde', sh);
+  form.addEventListener('input', clearFieldErr);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const lyDo = form.lyDo.value.trim();
+    if (!lyDo) { scFieldErr(form, 'lyDo', 'eRequired'); return; }
+    busy(form, true);
+    try {
+      const r = await api('hdAction', { op: 'ketthuc', ma: h.MaHD, ngaySuaCu: h.NgaySua || '', lyDo });
+      S.data.hopDong = r.hopDong; saveCache();
+      closeSheet(); toast('saved', 'ok'); render(true);
+    } catch (e) {
+      if (e.code === 'CONFLICT' || e.code === 'BAD_STATE') await hdHandleErr(e);
+      else if (e.code !== 'AUTH') $('#hde-msg').innerHTML = errHtml(e);
+    } finally { if (form.isConnected) busy(form, false); }
+  });
+}
+async function hdSimpleOp(op, ma) {
+  const h = hdByMa(ma);
+  if (!h || !needOnline()) return;
+  if (op === 'xoa' && !(await confirmDlg(tr('hdDeleteQ', [ma]), 'hdDeleteMsg', { ok: 'delete', danger: true }))) return;
+  try {
+    const r = await api('hdAction', { op, ma, ngaySuaCu: h.NgaySua || '' });
+    S.data.hopDong = r.hopDong; saveCache();
+    toast(op === 'xoa' ? tr('scDeleted', [ma]) : tr('saved'), 'ok');
+    if (op === 'xoa') location.replace('#/hd'); else render(true);
+  } catch (e) { await hdHandleErr(e); }
+}
+
+/* ---- Trang máy: hợp đồng áp dụng ---- */
+function tbHdSection(tb) {
+  const list = hdOfTb(tb.ID).filter(h => { const s = hdStatus(h); return s.st !== 'KETTHUC' && !(s.st === 'DAKYTIEP' && s.left < 0); });
+  if (!list.length) return '';
+  return `<section class="card">
+    <div class="card-h">${ic('file')}${t('contracts')}<span class="count">${list.length}</span></div>
+    <div class="mini-list">${list.map(hdMini).join('')}</div>
+  </section>`;
+}
+
+/* ---------------------- Bảo trì dự đoán ---------------------- */
+/* Phiếu đo DD-yyyy-nnnn: 1 máy + 1 loại đo (nhiệt ảnh · rung · cách điện) + nhiều điểm đo, mỗi điểm xếp mức A–D
+ * theo ngưỡng chép vào phiếu (giống backend ddEval_). Chu kỳ đo (tháng) → hạn đo lần sau. */
+const DD_LOAI = ['NHIET', 'RUNG', 'CACHDIEN'];
+const DD_MUC = ['A', 'B', 'C', 'D'];
+const DD_ICON = { NHIET: 'thermo', RUNG: 'vibe', CACHDIEN: 'insul' };
+const DD_UNIT = { NHIET: '°C', RUNG: 'mm/s', CACHDIEN: 'MΩ' };
+const DD_CHUAN = {
+  NHIET: { NETA_PT: ['1', '3', '15'], NETA_MT: ['10', '20', '40'] },
+  RUNG: { ISO1_I: ['0.71', '1.8', '4.5'], ISO1_II: ['1.12', '2.8', '7.1'], ISO1_III: ['1.8', '4.5', '11.2'], ISO1_IV: ['2.8', '7.1', '18'],
+    ISO3_2R: ['1.4', '2.8', '4.5'], ISO3_2F: ['2.3', '4.5', '7.1'], ISO3_1R: ['2.3', '4.5', '7.1'], ISO3_1F: ['3.5', '7.1', '11'] },
+  CACHDIEN: { MIN1: ['1'] }
+};
+const DD_KEYS = { NHIET: ['td', 'tr'], RUNG: ['h', 'v', 'a'], CACHDIEN: ['l1', 'l2', 'l3', 'l12', 'l23', 'l31'] };
+const DD_TABS = [{ id: 'CAN', key: 'ddTabDue' }, { id: 'CB', key: 'ddTabAlarm' }, { id: 'LS', key: 'ddTabHist' }];
+const DD_VOLTS = ['250', '500', '1000', '2500', '5000'];
+
+function allDD() { return (S.data && S.data.phieuDD) || []; }
+function ddBySo(so) { const k = String(so || '').toUpperCase(); return allDD().find(x => String(x.SoPhieu).toUpperCase() === k) || null; }
+function ddSortDesc(a, b) { return String(b.TGDo || '').localeCompare(String(a.TGDo || '')) || String(b.SoPhieu).localeCompare(String(a.SoPhieu)); }
+function ddOf(id, loai) { const k = String(id).toUpperCase(); return allDD().filter(x => String(x.IDThietBi).toUpperCase() === k && (!loai || x.Loai === loai)).sort(ddSortDesc); }
+function mergeDD(rows) {
+  if (!S.data) return;
+  const arr = S.data.phieuDD || (S.data.phieuDD = []);
+  rows.forEach(r => { const i = arr.findIndex(x => x.SoPhieu === r.SoPhieu); if (i >= 0) arr[i] = r; else arr.push(r); });
+  saveCache();
+}
+function removeDD(so) { if (S.data && S.data.phieuDD) { S.data.phieuDD = S.data.phieuDD.filter(x => x.SoPhieu !== so); saveCache(); } }
+function ddPts(dd) { return jparse(dd.DiemDo, []); }
+function ddNum(v) { const s = String(v === undefined || v === null ? '' : v).trim().replace(/\s/g, '').replace(',', '.'); return s === '' ? '' : (/^-?\d+(\.\d+)?$/.test(s) ? String(Number(s)) : null); }
+function irNum(v) {
+  const s = String(v === undefined || v === null ? '' : v).trim().replace(/\s/g, '');
+  if (!s) return '';
+  const over = /^[>≥]/.test(s);
+  const n = ddNum(over ? s.slice(1) : s);
+  return n === null || n === '' || Number(n) < 0 ? null : (over ? '>' + n : n);
+}
+function irVal(s) { return Number(String(s).replace(/^[>≥]/, '')); }
+/** Mức của một điểm (giống backend ddEval_) */
+function ddEval(loai, ng, x, pi) {
+  const tt = (ng || []).map(Number);
+  if (loai === 'CACHDIEN') {
+    if (x < tt[0]) return 'D';
+    if (pi !== undefined && pi !== '') { const p = Number(pi); if (p < 1) return 'D'; if (p < 2) return 'B'; }
+    return 'A';
+  }
+  return x <= tt[0] ? 'A' : (x <= tt[1] ? 'B' : (x <= tt[2] ? 'C' : 'D'));
+}
+/** Tính chỉ số đại diện + mức cho một điểm đang nhập → { x, m } | { err } | null */
+function ddCalc(loai, ng, p) {
+  if (loai === 'NHIET') {
+    const a = ddNum(p.td), b = ddNum(p.tr);
+    if (a === null || b === null) return { err: 'eNumber' };
+    if (a === '' || b === '') return null;
+    const x = Math.round((Number(a) - Number(b)) * 10) / 10;
+    return { x, m: ddEval(loai, ng, x) };
+  }
+  const vals = [];
+  let bad = false;
+  DD_KEYS[loai].forEach(k => {
+    const n = loai === 'CACHDIEN' ? irNum(p[k]) : ddNum(p[k]);
+    if (n === null || (loai === 'RUNG' && n !== '' && Number(n) < 0)) bad = true;
+    else if (n !== '') vals.push(loai === 'CACHDIEN' ? irVal(n) : Number(n));
+  });
+  const pi = loai === 'CACHDIEN' ? ddNum(p.pi) : '';
+  if (pi === null || (pi !== '' && Number(pi) <= 0)) bad = true;
+  if (bad) return { err: 'eNumber' };
+  if (!vals.length) return null;
+  const x = loai === 'CACHDIEN' ? Math.min(...vals) : Math.max(...vals);
+  return { x, m: ddEval(loai, ng, x, pi) };
+}
+function ddNg(dd) { return String(dd.Nguong || '').split(',').filter(Boolean); }
+function ddMucPill(m, cls) { return m ? `<span class="pill dd-${esc(m)}${cls ? ' ' + cls : ''}">${t('ddM' + m)}</span>` : ''; }
+function ddLoaiBi(loai, cls) { return `<span class="dd-loai${cls ? ' ' + cls : ''}">${ic(DD_ICON[loai] || 'pulse')}${t('ddL' + loai)}</span>`; }
+/** Tên chuẩn đánh giá + ngưỡng: "ISO 10816-3 nhóm 2, móng cứng — A ≤ 1,4 < B ≤ 2,8 < C ≤ 4,5 < D mm/s" */
+function ddChuanTr(loai, chuan) { return tr('ddC_' + (DD_CHUAN[loai] && DD_CHUAN[loai][chuan] ? chuan : 'TUY')); }
+function ddZones(loai, ng) {
+  const f = v => fmtNum(v);
+  if (loai === 'CACHDIEN') return ng[0] ? tp('ddZonesCD', f(ng[0])) : '';
+  if (ng.length < 3) return '';
+  return `A ≤ ${f(ng[0])} < B ≤ ${f(ng[1])} < C ≤ ${f(ng[2])} < D` + (loai === 'NHIET' ? ' (ΔT °C)' : ' (mm/s)');
+}
+/** Lần đo gần nhất của mỗi máy + loại */
+function ddZonesHtml(loai, ng) { return loai === 'CACHDIEN' ? (ng[0] ? t('ddZonesCD', fmtNum(ng[0])) : '') : esc(ddZones(loai, ng)); }
+function ddLatestMap() {
+  const m = new Map();
+  allDD().forEach(r => { const k = String(r.IDThietBi).toUpperCase() + '|' + r.Loai; const c = m.get(k); if (!c || ddSortDesc(r, c) < 0) m.set(k, r); });
+  return m;
+}
+/** Hạn đo: QUAHAN · DENHAN (≤ 7 ngày) · CHUADEN */
+function ddDue(rec, today) {
+  if (!rec.HanDoTiep) return null;
+  const days = dDiff(today || dToday(), rec.HanDoTiep);
+  return { days, st: days < 0 ? 'QUAHAN' : (days <= 7 ? 'DENHAN' : 'CHUADEN') };
+}
+function ddTodo() {
+  const today = dToday(), out = [];
+  ddLatestMap().forEach(r => {
+    const tb = tbById(r.IDThietBi);
+    if (!tb || MAY_NGUNG.includes(tb.TrangThai)) return;
+    const d = ddDue(r, today);
+    if (d && d.st !== 'CHUADEN') out.push({ r, tb, d });
+  });
+  return out.sort((a, b) => String(a.r.HanDoTiep).localeCompare(String(b.r.HanDoTiep)));
+}
+function ddAlarms() {
+  const out = [];
+  ddLatestMap().forEach(r => { const tb = tbById(r.IDThietBi); if ((r.MucDo === 'C' || r.MucDo === 'D') && (!tb || tb.TrangThai !== 'THANHLY')) out.push({ r, tb }); });
+  return out.sort((a, b) => DD_MUC.indexOf(b.r.MucDo) - DD_MUC.indexOf(a.r.MucDo) || ddSortDesc(a.r, b.r));
+}
+function ddDueHtml(d) {
+  if (!d) return '';
+  const x = d.days < 0 ? tr('dueLate', [-d.days]) : (d.days === 0 ? tr('dueToday') : (d.days === 1 ? tr('dueTomorrow') : tr('dueIn', [d.days])));
+  return `<span class="due kh-${esc(d.st)}">${ic('calendar')}${bi(x.vi, x.zh)}</span>`;
+}
+function ddCanEdit(dd) { return isQL() || (Date.now() - tsMs(dd.NgayTao) <= KT_EDIT_HOURS * 3600000); }
+/** Giá trị một điểm dạng chữ (không kèm mức) */
+function ddValTxt(loai, p) {
+  const f = v => (v === undefined || v === '' ? '–' : (String(v)[0] === '>' ? '>' + fmtNum(String(v).slice(1)) : fmtNum(v)));
+  if (loai === 'NHIET') return `${f(p.td)} °C − ${f(p.tr)} °C = ΔT ${f(p.x)} °C`;
+  if (loai === 'RUNG') return `H ${f(p.h)} · V ${f(p.v)} · A ${f(p.a)} mm/s`;
+  const pp = ['l12', 'l23', 'l31'].some(k => p[k] !== undefined) ? ` · L1–L2 ${f(p.l12)} · L2–L3 ${f(p.l23)} · L3–L1 ${f(p.l31)}` : '';
+  return `L1–E ${f(p.l1)} · L2–E ${f(p.l2)} · L3–E ${f(p.l3)}${pp} MΩ${p.pi !== undefined ? ` · PI ${f(p.pi)}` : ''}`;
+}
+function ddXTxt(loai, x) { return (loai === 'NHIET' ? 'ΔT ' : '') + fmtNum(x) + ' ' + DD_UNIT[loai]; }
+
+/* ---- Trang chủ + Công việc ---- */
+function homeDdRcaCard() {
+  if (!allDD().length && !allRCA().length) return '';
+  const al = ddAlarms().length, todo = ddTodo(), nLate = todo.filter(x => x.d.st === 'QUAHAN').length;
+  const rs = rcaOpenStats();
+  const cells = [
+    ['dd-D', al, '#/dd', 'ddTabGo', 'CB', 'ddTabAlarm'],
+    [nLate ? 'kh-QUAHAN' : 'kh-DENHAN', todo.length, '#/dd', 'ddTabGo', 'CAN', 'ddTabDue'],
+    ['rc-KHACPHUC', rs.open, '#/rca', 'rcaTabGo', 'MO', 'rcaOpenShort'],
+    ['kh-QUAHAN', rs.late, '#/rca', 'rcaTabGo', 'HD', 'rcaLateShort']
+  ];
+  const worst = al || rs.late ? 'bad' : (todo.length || rs.open ? 'warn' : 'ok');
+  return `<section class="card">
+    <div class="card-h">${ic('pulse', worst)}${t('ddRcaTitle')}</div>
+    <div class="sc-counters">
+      ${cells.map(([cls, n, href, act, tab, key]) => `<a class="scc ${cls}${n ? ' has' : ''}" href="${href}" data-act="${act}" data-t="${tab}"><b>${n}</b>${t(key)}</a>`).join('')}
+    </div>
+    <div class="card-f">
+      <a class="link" href="#/dd" data-act="ddTabGo" data-t="${al ? 'CB' : 'CAN'}">${t('predictive')}</a>
+      <span class="sp"></span>
+      <a class="link" href="#/rca" data-act="rcaTabGo" data-t="MO">${t('rcaShort')}</a>
+    </div>
+  </section>`;
+}
+
+/* ---- Trang máy ---- */
+function tbDdSection(tb) {
+  const rows = DD_LOAI.map(l => ({ l, r: ddOf(tb.ID, l)[0] || null })).filter(x => x.r);
+  const loading = S.online && !S.ddLoaded.has(tb.ID);
+  const can = tb.TrangThai !== 'THANHLY';
+  return `<section class="card">
+    <div class="card-h">${ic('pulse')}${t('predictive')}<span class="count">${ddOf(tb.ID).length}</span></div>
+    ${rows.length ? `<div class="mini-list">${rows.map(({ l, r }) => `<a class="mini dd-${esc(r.MucDo)}" href="#/dd/${encodeURIComponent(r.SoPhieu)}">
+        <div class="mini-main">
+          <div class="mini-top">${ddLoaiBi(l)}<span class="sp"></span><span class="muted small">${esc(fmtShort(r.TGDo))}</span></div>
+          <div class="sc-meta">${Number(r.SoDiemCanhBao) ? `<span class="small">${t('ddNWarn', r.SoDiemCanhBao, r.SoDiem)}</span>` : `<span class="muted small">${t('ddNPoints', r.SoDiem)}</span>`}
+            ${ddDueHtml(ddDue(r))}</div>
+        </div>
+        ${ddMucPill(r.MucDo)}</a>`).join('')}</div>`
+      : (loading ? `<div class="empty small"><div class="spinner"></div></div>` : `<div class="empty small">${t('ddNoneTb')}</div>`)}
+    ${can ? `<div class="card-f"><button class="btn sm primary" data-act="ddNewTb" data-id="${esc(tb.ID)}">${ic('plus')}${t('ddRecord')}</button></div>` : ''}
+  </section>`;
+}
+async function loadTbDdHistory(id, then) {
+  if (!S.online || S.ddLoaded.has(id)) return;
+  S.ddLoaded.add(id);
+  try { const r = await api('listDD', { id }); mergeDD(r.rows); } catch (e) { /* giữ dữ liệu đã có */ }
+  if (then) then(); else rerenderTb(id);
+}
+
+/* ---- Danh sách ---- */
+function ddMatch(tb, extra) { return tbMatchF(tb, S.ddf, extra) && true; }
+function ddListItems(tab) {
+  const f = S.ddf;
+  const okL = l => !f.loai || l === f.loai;
+  if (tab === 'CAN') return ddTodo().filter(x => okL(x.r.Loai) && ddMatch(x.tb));
+  if (tab === 'CB') return ddAlarms().filter(x => okL(x.r.Loai) && ddMatch(x.tb, [x.r.SoPhieu]));
+  return allDD().filter(r => okL(r.Loai) && ddMatch(tbById(r.IDThietBi) || { ID: r.IDThietBi }, [r.SoPhieu, r.NguoiDo, r.NhaThau, r.DeXuat]))
+    .sort(ddSortDesc).map(r => ({ r, tb: tbById(r.IDThietBi) }));
+}
+function viewDdList() {
+  if (!S.data) return loadingView();
+  const f = S.ddf;
+  const todo = ddTodo(), al = ddAlarms();
+  const nLate = todo.filter(x => x.d.st === 'QUAHAN').length;
+  return {
+    live: true, restoreScroll: true, title: 'predictive', back: 'cv', tab: 'cv',
+    html: `
+      <div class="toolbar sticky">
+        <div class="seg sc-tabs">${DD_TABS.map(x => {
+          const lb = tr(x.key);
+          const n = x.id === 'CAN' ? todo.length : (x.id === 'CB' ? al.length : 0);
+          const cls = x.id === 'CAN' ? (nLate ? 'kh-QUAHAN' : 'kh-DENHAN') : 'dd-D';
+          return `<a data-act="ddTab" data-t="${x.id}" class="${x.id === f.tab ? 'on' : ''}">${bi(lb.vi, lb.zh)}${n ? `<span class="tcount ${cls}">${n}</span>` : ''}</a>`;
+        }).join('')}</div>
+        <div class="search">${ic('search')}<input type="search" id="dd-q" value="${esc(f.q)}" placeholder="${esc(tp('searchTb'))}" autocomplete="off"></div>
+        <div class="chips">
+          <button class="chip${f.loai ? ' on' : ''}" data-act="ddFilterLoai">${ic('pulse')}${f.loai ? t('ddL' + f.loai) : t('ddAllTypes')}</button>
+          <button class="chip${f.kv ? ' on' : ''}" data-act="ddFilter" data-k="kv">${ic('map')}${f.kv ? dmBi('KHUVUC', f.kv) : t('allAreas')}</button>
+          <button class="chip${f.nhom ? ' on' : ''}" data-act="ddFilter" data-k="nhom">${ic('device')}${f.nhom ? dmBi('NHOMTB', f.nhom) : t('allGroups')}</button>
+        </div>
+      </div>
+      <div class="list-bar"><span id="dd-count" class="muted"></span><span class="sp"></span>
+        <button class="link" data-act="ddCsv">${t('exportCsv')}</button></div>
+      <div id="dd-list" class="tb-list"></div>
+      <div id="dd-more"></div>
+      <a class="fab" href="#/dd" data-act="ddNew" aria-label="${esc(tp('ddRecord'))}">${ic('plus')}</a>`,
+    after: () => {
+      drawDdList();
+      $('#dd-q').addEventListener('input', debounce(e => { S.ddf.q = e.target.value; drawDdList(); }, 150));
+    }
+  };
+}
+function drawDdList() {
+  const box = $('#dd-list');
+  if (!box) return;
+  const tab = S.ddf.tab;
+  const list = ddListItems(tab);
+  $('#dd-count').innerHTML = tab === 'LS' ? t('scNTickets', list.length) : t('nDevices', list.length);
+  box.classList.toggle('bare', !list.length);
+  const filtered = S.ddf.q || S.ddf.kv || S.ddf.nhom || S.ddf.loai;
+  if (!list.length) {
+    const okTab = tab !== 'LS' && allDD().length && !filtered;
+    box.innerHTML = `<div class="empty${okTab ? ' ok' : ''}">${ic(okTab ? 'checkCircle' : 'pulse')}${
+      filtered ? t('noResult') : t(!allDD().length ? 'ddNone' : (tab === 'CAN' ? 'ddNoDue' : (tab === 'CB' ? 'ddNoAlarm' : 'noResult')))}</div>`;
+  } else if (tab === 'CAN') {
+    box.innerHTML = list.slice(0, 300).map(({ r, tb, d }) => `<a class="sc-item kh-${esc(d.st)}" href="#/dd-moi/${encodeURIComponent(r.IDThietBi)}/${r.Loai}">
+      <div class="tb-top"><span class="tb-id">${esc(r.IDThietBi)}</span>${tb.MaNhaMay ? `<span class="tb-ma">${esc(tb.MaNhaMay)}</span>` : ''}<span class="sp"></span>${ddLoaiBi(r.Loai, 'sm')}</div>
+      ${bi(tb.TenMay, tb.TenMayZH, 'tb-name')}
+      <div class="sc-meta">${ddDueHtml(d)}<span class="muted small">${esc(fmtDate(r.HanDoTiep))}</span><span class="sp"></span>
+        <span class="muted small">${t('ddLastShort', fmtDate(r.TGDo))}</span>${ddMucPill(r.MucDo, 'sm')}</div>
+    </a>`).join('');
+  } else {
+    box.innerHTML = list.slice(0, 300).map(({ r, tb }) => ddItem(r, tb)).join('');
+  }
+  const more = $('#dd-more');
+  const left = (S.data.ddOld || 0) - S.ddOldLoaded;
+  more.innerHTML = tab === 'LS' && left > 0 ? `<button class="btn block" data-act="ddLoadOld">${ic('download')}${t('scLoadOld', left)}</button>` : '';
+}
+function ddItem(r, tb) {
+  const sc = allSC().filter(x => x.PhieuNguon === r.SoPhieu);
+  return `<a class="sc-item dd-${esc(r.MucDo)}" href="#/dd/${encodeURIComponent(r.SoPhieu)}">
+    <div class="tb-top"><span class="sc-no">${esc(r.SoPhieu)}</span>${ddMucPill(r.MucDo)}<span class="sp"></span><span class="muted small">${esc(fmtShort(r.TGDo))}</span></div>
+    <div class="sc-tbline"><span class="tb-id">${esc(r.IDThietBi)}</span> ${tb ? bi(tb.TenMay, tb.TenMayZH, 'tb-name') : ''}</div>
+    <div class="sc-meta">${ddLoaiBi(r.Loai, 'sm')}${Number(r.SoDiemCanhBao) ? `<span class="small">${t('ddNWarn', r.SoDiemCanhBao, r.SoDiem)}</span>` : `<span class="muted small">${t('ddNPoints', r.SoDiem)}</span>`}
+      ${sc.length ? `<span class="sc-chip">${esc(sc[0].SoPhieu)}</span>` : ''}<span class="sp"></span><span class="muted small">${esc(r.NguoiDo)}</span></div>
+  </a>`;
+}
+async function ddLoadOld(btn) {
+  if (!needOnline() || S.ddOldBusy) return;
+  S.ddOldBusy = true;
+  btn.disabled = true; btn.classList.add('loading');
+  try {
+    const r = await api('listDD', { old: true, offset: S.ddOldLoaded, limit: 200 });
+    S.ddOldLoaded += r.rows.length;
+    S.data.ddOld = r.total;
+    mergeDD(r.rows);
+    drawDdList();
+  } catch (e) { if (e.code !== 'AUTH') toast(errText(e), 'err'); } finally { S.ddOldBusy = false; if (btn.isConnected) { btn.disabled = false; btn.classList.remove('loading'); } }
+}
+function exportDdCsv() {
+  const head = csvHead([['', 'Số phiếu', '单号'], ['', 'Ngày đo', '检测时间'], ['', 'ID', ''], ['', 'Tên máy', '设备名称'], ['', 'Khu vực', '区域'],
+    ['', 'Loại đo', '检测类型'], ['', 'Chuẩn đánh giá', '评价标准'], ['', 'Ngưỡng', '阈值'], ['', 'Điện áp thử (V)', '测试电压(V)'], ['', 'Điểm đo', '测点'],
+    ['', 'T đo (°C)', '实测温度(°C)'], ['', 'T tham chiếu (°C)', '参考温度(°C)'], ['', 'ΔT (°C)', '温差(°C)'], ['', 'H (mm/s)', ''], ['', 'V (mm/s)', ''], ['', 'A (mm/s)', ''],
+    ['', 'L1–E (MΩ)', ''], ['', 'L2–E (MΩ)', ''], ['', 'L3–E (MΩ)', ''], ['', 'L1–L2 (MΩ)', ''], ['', 'L2–L3 (MΩ)', ''], ['', 'L3–L1 (MΩ)', ''], ['', 'PI', ''],
+    ['', 'Chỉ số', '指标'], ['', 'Mức', '等级'], ['', 'Ghi chú điểm', '测点备注'], ['', 'Người đo', '检测人'], ['', 'Đơn vị đo', '检测单位'], ['', 'Thiết bị đo', '检测仪器'],
+    ['', 'Đề xuất', '建议措施'], ['', 'Hạn đo tiếp', '下次检测日期']]);
+  const rows = [head];
+  const recs = S.ddf.tab === 'LS' ? ddListItems('LS').map(x => x.r) : ddListItems(S.ddf.tab).map(x => x.r);
+  recs.forEach(r => {
+    const tb = tbById(r.IDThietBi);
+    const base = [r.SoPhieu, r.TGDo, r.IDThietBi, tb ? tb.TenMay : '', tb ? dmVi('KHUVUC', tb.ViTri) : '', tr('ddL' + r.Loai).vi, ddChuanTr(r.Loai, r.Chuan).vi, r.Nguong, r.DienApThu];
+    const tail = [r.NguoiDo, r.NhaThau || tr('ddInHouse').vi, r.ThietBiDo, r.DeXuat, r.HanDoTiep];
+    const pts = ddPts(r);
+    if (!pts.length) rows.push(base.concat(new Array(17).fill(''), tail));
+    pts.forEach(p => rows.push(base.concat([p.t, p.td, p.tr, r.Loai === 'NHIET' ? p.x : '', p.h, p.v, p.a, p.l1, p.l2, p.l3, p.l12, p.l23, p.l31, p.pi, p.x, p.m, p.g].map(v => v === undefined ? '' : v), tail)));
+  });
+  downloadCsv(`bao-tri-du-doan_${stamp()}.csv`, rows);
+}
+
+/* ---- Chi tiết + xu hướng ---- */
+VIEWS.dd = p => {
+  if (p[1] && p[2] === 'sua') return viewDdForm('edit', p[1]);
+  if (p[1]) return viewDdDetail(p[1]);
+  return viewDdList();
+};
+VIEWS['dd-moi'] = p => viewDdForm('new', p[1], p[2]);
+
+/** Lịch sử một điểm đo của máy (theo tên điểm, cùng loại) → [{d, y, m, so}] tăng dần theo thời gian */
+function ddPointHist(id, loai, name) {
+  const n = norm(name);
+  const out = [];
+  ddOf(id, loai).slice().reverse().forEach(r => {
+    const p = ddPts(r).find(q => norm(q.t) === n);
+    if (p && p.x !== undefined && p.x !== '') out.push({ d: String(r.TGDo).slice(0, 10), ts: r.TGDo, y: Number(p.x), m: p.m, so: r.SoPhieu });
+  });
+  return out;
+}
+
+function viewDdDetail(so) {
+  if (!S.data) return loadingView();
+  const dd = ddBySo(so);
+  if (!dd) {
+    if (S.online) {
+      setTimeout(() => fetchMissingDD(so), 0);
+      return { title: 'ddDetail', back: 'dd', tab: 'cv', html: `<div class="card pad center"><div class="spinner"></div><p class="muted">${t('loading')}</p></div>` };
+    }
+    return { title: 'ddDetail', back: 'dd', tab: 'cv', html: `<div class="empty">${ic('search')}${t('ddNotFound', so)}</div>` };
+  }
+  const ql = isQL();
+  const enc = encodeURIComponent(dd.SoPhieu);
+  const pts = ddPts(dd);
+  const ng = ddNg(dd);
+  const loading = S.online && !S.ddLoaded.has(dd.IDThietBi);
+  const hist = ddOf(dd.IDThietBi, dd.Loai);
+  const prev = hist.find(r => ddSortDesc(r, dd) > 0) || null;   // lần đo trước phiếu này
+  const prevPts = prev ? ddPts(prev) : [];
+  const linked = allSC().filter(x => x.PhieuNguon === dd.SoPhieu).sort(scSortDesc);
+  const nWarn = Number(dd.SoDiemCanhBao) || 0;
+  const canEdit = ddCanEdit(dd);
+  const due = ddDue(dd);
+  const isLatest = hist[0] && hist[0].SoPhieu === dd.SoPhieu;
+  S.trend = {};
+  const kv = (key, val, raw) => (val === '' || val === null || val === undefined) ? '' :
+    `<div class="kv"><div class="k">${t(key)}</div><div class="v">${raw ? val : esc(val)}</div></div>`;
+  const kvCol = (key, val) => val ? `<div class="kv col"><div class="k">${t(key)}</div><div class="v pre">${esc(val)}</div></div>` : '';
+  const ptRow = (p, i) => {
+    const pp = prevPts.find(q => norm(q.t) === norm(p.t));
+    const h = ddPointHist(dd.IDThietBi, dd.Loai, p.t);
+    const cid = 'tr' + i;
+    if (h.length >= 2) S.trend[cid] = { pts: h, ng, loai: dd.Loai, cur: dd.SoPhieu };
+    return `<div class="dd-pt dd-${esc(p.m || 'A')}">
+      <div class="dd-pt-h"><span class="mau-no">${i + 1}</span><div class="grow"><b>${esc(p.t)}</b></div>${ddMucPill(p.m)}</div>
+      <div class="dd-pt-x"><b>${esc(ddXTxt(dd.Loai, p.x))}</b>${pp && pp.x !== undefined ? `<span class="muted small">${t('ddPrevVal', ddXTxt(dd.Loai, pp.x), pp.m || '')}</span>` : ''}</div>
+      <div class="small muted">${esc(ddValTxt(dd.Loai, p))}</div>
+      ${p.g ? `<div class="kq-note">${esc(p.g)}</div>` : ''}
+      ${h.length >= 2 ? `<div class="trend" data-trend="${cid}">${trendSvg(S.trend[cid])}</div>` : ''}
+    </div>`;
+  };
+  return {
+    live: true, title: 'ddDetail', back: 'dd', tab: 'cv',
+    html: `
+      <section class="card hero dd-${esc(dd.MucDo)}">
+        <div class="hero-main">
+          <div class="hero-ids"><span class="sc-no big">${esc(dd.SoPhieu)}</span>${ddMucPill(dd.MucDo)}</div>
+          ${ddLoaiBi(dd.Loai, 'big')}
+          <div class="sc-meta"><span class="small">${esc(fmtTime(dd.TGDo))}</span><span class="sp"></span>
+            ${nWarn ? `<span class="small">${t('ddNWarn', nWarn, dd.SoDiem)}</span>` : `<span class="muted small">${t('ddNPoints', dd.SoDiem)}</span>`}</div>
+        </div>
+      </section>
+      ${tbCard(dd.IDThietBi)}
+      ${nWarn && !linked.length ? `<div class="notice warn">${ic('alert')}<div>${t('ddWarnNote')}</div></div>` : ''}
+      <div class="actions-row">
+        ${canEdit ? `<a class="btn sm" href="#/dd/${enc}/sua">${ic('edit')}${t('edit')}</a>` : ''}
+        ${nWarn ? `<a class="btn sm${linked.length ? '' : ' primary'}" href="#/sc-moi/${encodeURIComponent(dd.IDThietBi)}/${enc}">${ic('wrench')}${t('btMakeSc')}</a>` : ''}
+        ${isLatest && tbById(dd.IDThietBi) ? `<a class="btn sm" href="#/dd-moi/${encodeURIComponent(dd.IDThietBi)}/${dd.Loai}">${ic('repeat')}${t('ddMeasureAgain')}</a>` : ''}
+      </div>
+      <section class="card">
+        <div class="card-h">${ic(DD_ICON[dd.Loai])}${t('ddResults')}<span class="count">${pts.length}</span></div>
+        <div class="dd-std">${biTr(ddChuanTr(dd.Loai, dd.Chuan))}<div class="small muted">${ddZonesHtml(dd.Loai, ng)}</div>${dd.DienApThu ? `<div class="small muted">${t('ddVoltV', fmtNum(dd.DienApThu))}</div>` : ''}</div>
+        ${pts.map(ptRow).join('')}
+        ${loading ? `<div class="empty small"><div class="spinner"></div></div>` : ''}
+        ${!loading && hist.length < 2 ? `<p class="muted small pad-x">${t('ddTrendHint')}</p>` : ''}
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('info')}${t('info')}</div>
+        ${kv('ddNguoiDo', dd.NguoiDo)}
+        ${kv('ddDonVi', dd.NhaThau || tr('ddInHouse').vi)}
+        ${kv('ddThietBiDo', dd.ThietBiDo)}
+        ${kvCol('ddDieuKien', dd.DieuKien)}
+        ${kvCol('ddDeXuat', dd.DeXuat)}
+        ${kv('ddChuKy', dd.ChuKyThang ? `${biTr(tr('nMonths', [dd.ChuKyThang]))}` : `<span class="muted">${t('ddNoCycle')}</span>`, true)}
+        ${dd.HanDoTiep ? kv('ddNext', `${esc(fmtDate(dd.HanDoTiep))} ${isLatest ? ddDueHtml(due) : ''}`, true) : ''}
+        ${kvCol('fGhiChu', dd.GhiChu)}
+      </section>
+      ${linked.length ? `<section class="card">
+        <div class="card-h">${ic('wrench')}${t('btLinkedSc')}<span class="count">${linked.length}</span></div>
+        <div class="mini-list">${linked.map(x => scMini(x, false)).join('')}</div>
+      </section>` : ''}
+      ${hist.length > 1 ? `<section class="card">
+        <div class="card-h">${ic('log')}${t('ddHistory')}<span class="count">${hist.length}</span></div>
+        <div class="mini-list">${hist.slice(0, 30).map(r => `<a class="mini dd-${esc(r.MucDo)}${r.SoPhieu === dd.SoPhieu ? ' cur' : ''}" href="#/dd/${encodeURIComponent(r.SoPhieu)}">
+          <div class="mini-main"><div class="mini-top"><span class="sc-no">${esc(r.SoPhieu)}</span><span class="muted small">${esc(fmtShort(r.TGDo))}</span></div>
+          <div class="sc-meta"><span class="muted small">${esc(r.NguoiDo)}${r.NhaThau ? ' · ' + esc(r.NhaThau) : ''}</span></div></div>${ddMucPill(r.MucDo)}</a>`).join('')}</div>
+      </section>` : ''}
+      <p class="muted small audit">${t('createdBy', fmtTime(dd.NgayTao), dd.NguoiTao || '—')}${dd.NgaySua !== dd.NgayTao ? `<br>${t('updatedBy', fmtTime(dd.NgaySua), dd.NguoiSua || '—')}` : ''}</p>
+      ${!ql && !canEdit ? `<p class="muted small audit">${t('ktEditWindow', KT_EDIT_HOURS)}</p>` : ''}
+      ${ql ? `<button class="btn block danger-outline" data-act="ddDelete" data-so="${esc(dd.SoPhieu)}">${ic('trash')}${t('ddDelete')}</button>` : ''}`,
+    after: () => {
+      bindTrends();
+      if (loading) loadTbDdHistory(dd.IDThietBi, () => { const p = route(); if (p[0] === 'dd' && p[1] && p[1].toUpperCase() === dd.SoPhieu.toUpperCase() && !p[2] && !$('.overlay.open')) { const y = window.scrollY; render(true); window.scrollTo(0, y); } });
+    }
+  };
+}
+async function fetchMissingDD(so) {
+  try { const r = await api('listDD', { so }); mergeDD(r.rows); } catch (e) { /* không tìm thấy */ }
+  const p = route();
+  if (p[0] !== 'dd' || !p[1] || p[1].toUpperCase() !== String(so).toUpperCase()) return;
+  if (ddBySo(so)) render(true); else $('#view .page').innerHTML = `<div class="empty">${ic('search')}${t('ddNotFound', so)}</div>`;
+}
+
+/**
+ * Biểu đồ xu hướng một điểm đo (SVG, một chuỗi): đường 2px màu thương hiệu, điểm tô theo mức A–D (vòng nền 2px),
+ * vạch ngưỡng mảnh có nhãn B/C/D (cách điện: vạch tối thiểu), nhãn giá trị ở điểm cuối, chạm để xem từng lần đo.
+ */
+function trendSvg(o) {
+  const W = 320, H = 112, L = 34, R = 30, T = 10, B = 20;
+  const pts = o.pts;
+  const ys = pts.map(p => p.y);
+  const ng = (o.ng || []).map(Number).filter(v => isFinite(v));
+  const dMax = Math.max(...ys);
+  let yMax = dMax;
+  // Hiện thêm ranh giới mức kế tiếp nếu không quá xa (≤ 2,5 lần giá trị lớn nhất) để biết còn cách bao nhiêu
+  const above = ng.filter(v => v > dMax).sort((a, b) => a - b)[0];
+  if (above !== undefined && above <= Math.max(dMax, 0.1) * 2.5) yMax = Math.max(yMax, above);
+  if (o.loai === 'CACHDIEN' && ng[0] !== undefined) yMax = Math.max(yMax, ng[0]);
+  const yMin = Math.min(0, ...ys);
+  yMax = yMax + (yMax - yMin) * 0.12 || 1;
+  const x0 = dMs(pts[0].d), x1 = dMs(pts[pts.length - 1].d);
+  const X = (p, i) => L + (x1 > x0 ? (dMs(p.d) - x0) / (x1 - x0) : (pts.length > 1 ? i / (pts.length - 1) : 0.5)) * (W - L - R);
+  const Y = v => T + (1 - (v - yMin) / (yMax - yMin)) * (H - T - B);
+  const ticks = [yMin, (yMin + yMax) / 2, yMax].map(v => Math.round(v * 10) / 10);
+  const grid = ticks.map(v => `<line class="tr-grid" x1="${L}" x2="${W - R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text class="tr-tick" x="${L - 5}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end">${esc(fmtNum(v))}</text>`).join('');
+  // Vạch ngưỡng: nhãn chữ bên phải; hai vạch quá sát nhau thì chỉ ghi nhãn của mức nặng hơn
+  let lastLblY = -Infinity;
+  const refs = (o.loai === 'CACHDIEN' ? [[ng[0], 'D']] : [[ng[2], 'D'], [ng[1], 'C'], [ng[0], 'B']])
+    .filter(([v]) => v !== undefined && v > yMin && v < yMax)
+    .map(([v, m]) => {
+      const y = Y(v);
+      const lbl = y - lastLblY >= 10 ? `<text class="tr-reft" x="${W - R + 9}" y="${(y + 3.5).toFixed(1)}">${m}</text>` : '';
+      if (lbl) lastLblY = y;
+      return `<line class="tr-ref lv-${m}" x1="${L}" x2="${W - R}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/>${lbl}`;
+    }).join('');
+  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p, i).toFixed(1)},${Y(p.y).toFixed(1)}`).join('');
+  const dots = pts.map((p, i) => `<circle class="tr-dot lv-${esc(p.m || 'A')}${p.so === o.cur ? ' cur' : ''}" cx="${X(p, i).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${p.so === o.cur ? 5.5 : 4}"/>`).join('');
+  const last = pts[pts.length - 1];
+  const lx = X(last, pts.length - 1), ly = Y(last.y);
+  // Nhãn giá trị cuối đặt bên trái điểm: đường đi lên thì nhãn nằm trên, đi xuống thì nằm dưới (tránh đè lên đường)
+  const rising = pts.length < 2 || last.y >= pts[pts.length - 2].y;
+  const ey = Math.max(T + 8, Math.min(H - B - 3, rising ? ly - 7 : ly + 14));
+  const endLbl = `<text class="tr-end" x="${(lx - 9).toFixed(1)}" y="${ey.toFixed(1)}" text-anchor="end">${esc(fmtNum(last.y))} · ${esc(last.m || '')}</text>`;
+  const xl = `<text class="tr-tick" x="${L}" y="${H - 5}">${esc(fmtDM(pts[0].d))}/${pts[0].d.slice(2, 4)}</text><text class="tr-tick" x="${W - R}" y="${H - 5}" text-anchor="end">${esc(fmtDM(last.d))}/${last.d.slice(2, 4)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(tp('ddTrend'))}">${grid}${refs}<path class="tr-line" d="${path}"/>${dots}${endLbl}${xl}
+    <line class="tr-x" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/></svg><div class="tr-tip" hidden></div>`;
+}
+/** Chạm / rê trên biểu đồ → đường dóng + ô giá trị của lần đo gần nhất theo trục thời gian */
+function bindTrends() {
+  $$('.trend[data-trend]').forEach(box => {
+    const o = S.trend && S.trend[box.dataset.trend];
+    if (!o) return;
+    const svg = $('svg', box), tip = $('.tr-tip', box), xl = $('.tr-x', box);
+    const dots = $$('.tr-dot', box);
+    const show = ev => {
+      const rc = svg.getBoundingClientRect();
+      const px = (ev.clientX - rc.left) / rc.width * 320;
+      let bi0 = 0, best = Infinity;
+      dots.forEach((d, i) => { const dx = Math.abs(Number(d.getAttribute('cx')) - px); if (dx < best) { best = dx; bi0 = i; } });
+      const p = o.pts[bi0], d = dots[bi0];
+      const cx = Number(d.getAttribute('cx'));
+      xl.setAttribute('x1', cx); xl.setAttribute('x2', cx); xl.setAttribute('visibility', 'visible');
+      tip.innerHTML = `<b>${esc(fmtDate(p.d))}</b> · ${esc(ddXTxt(o.loai, p.y))} ${ddMucPill(p.m, 'sm')}<div class="small muted">${esc(p.so)}</div>`;
+      tip.hidden = false;
+      const left = cx / 320 * rc.width;
+      tip.style.left = Math.max(0, Math.min(rc.width - tip.offsetWidth, left - tip.offsetWidth / 2)) + 'px';
+    };
+    const hide = () => { tip.hidden = true; xl.setAttribute('visibility', 'hidden'); };
+    svg.addEventListener('pointermove', show);
+    svg.addEventListener('pointerdown', show);
+    svg.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') hide(); });
+  });
+}
+
+/* ---- Biểu mẫu đo: ghi mới (new) · sửa (edit) ---- */
+function ddDefaultChuan(loai, tb) {
+  if (loai === 'NHIET') return 'NETA_PT';
+  if (loai === 'CACHDIEN') return 'MIN1';
+  const kw = Number(tb && tb.CongSuatKW) || 0;
+  return !kw ? 'ISO3_2R' : (kw <= 15 ? 'ISO1_I' : (kw <= 300 ? 'ISO3_2R' : 'ISO3_1R'));
+}
+function viewDdForm(mode, key, loaiArg) {
+  if (!S.data) return loadingView();
+  let tb, cur = null, loai;
+  if (mode === 'new') {
+    tb = tbById(key);
+    loai = String(loaiArg || '').toUpperCase();
+    if (!tb) return { title: 'ddNewTitle', back: 'dd', tab: 'cv', html: `<div class="empty">${ic('search')}${t('tbNotFound', key)}</div>` };
+    if (!DD_LOAI.includes(loai)) return { title: 'ddNewTitle', back: 'tb/' + encodeURIComponent(tb.ID), tab: 'cv', html: `<div class="empty">${t('eCode')}</div>` };
+    if (tb.TrangThai === 'THANHLY') return { title: 'ddNewTitle', back: 'tb/' + encodeURIComponent(tb.ID), tab: 'cv', html: `<div class="notice warn">${ic('alert')}<div>${t('eRetired')}</div></div>` };
+  } else {
+    cur = ddBySo(key);
+    if (!cur) {
+      if (S.online) { setTimeout(() => fetchMissingDD(key), 0); return loadingView(); }
+      return { title: 'ddEditTitle', back: 'dd', tab: 'cv', html: `<div class="empty">${t('ddNotFound', key)}</div>` };
+    }
+    if (!ddCanEdit(cur)) return forbiddenView('dd/' + encodeURIComponent(cur.SoPhieu));
+    tb = tbById(cur.IDThietBi) || { ID: cur.IDThietBi, TenMay: '' };
+    loai = cur.Loai;
+  }
+  const fkey = mode + ':' + (cur ? cur.SoPhieu : tb.ID + ':' + loai);
+  const last = mode === 'new' ? (ddOf(tb.ID, loai)[0] || null) : null;
+  if (!S.ddForm || S.ddForm.key !== fkey) {
+    const src = cur || last;
+    const chuan = src ? (src.Chuan || 'TUY') : ddDefaultChuan(loai, tb);
+    const ng = src ? ddNg(src) : (DD_CHUAN[loai][chuan] || []).slice();
+    const blank = p => ({ t: p ? p.t : '' });
+    S.ddForm = {
+      key: fkey, mode, id: tb.ID, loai, orig: cur ? cur.NgaySua : undefined, so: cur ? cur.SoPhieu : '',
+      d: cur ? { TGDo: cur.TGDo, NguoiDo: cur.NguoiDo, NhaThau: cur.NhaThau || '', ThietBiDo: cur.ThietBiDo || '', DieuKien: cur.DieuKien || '',
+        DienApThu: cur.DienApThu || '', DeXuat: cur.DeXuat || '', ChuKyThang: cur.ChuKyThang || '', GhiChu: cur.GhiChu || '' }
+        : { TGDo: tsNow(), NguoiDo: S.name, NhaThau: last ? last.NhaThau || '' : '', ThietBiDo: last ? last.ThietBiDo || '' : '', DieuKien: '',
+          DienApThu: last ? last.DienApThu || '' : (loai === 'CACHDIEN' ? '500' : ''), DeXuat: '', ChuKyThang: last ? last.ChuKyThang || '' : '', GhiChu: '' },
+      chuan, ng,
+      // Ghi mới: chép tên các điểm đo của lần trước (để so sánh xu hướng đúng điểm)
+      pts: cur ? ddPts(cur).map(p => Object.assign({}, p)) : (last ? ddPts(last).map(blank) : [blank(null)])
+    };
+  }
+  const F = S.ddForm, D = F.d;
+  const back = cur ? 'dd/' + encodeURIComponent(cur.SoPhieu) : 'tb/' + encodeURIComponent(tb.ID);
+  const txt = (f, key, req, attrs, ph) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)}${req ? ' <b class="req">*</b>' : ''}</span>
+    <input data-df="${f}" value="${esc(D[f] || '')}" ${attrs || ''} ${ph ? `placeholder="${esc(tp(ph))}"` : ''}><span class="fe"></span></label>`;
+  const area = (f, key, ph) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)}</span>
+    <textarea data-df="${f}" rows="2" maxlength="2000" ${ph ? `placeholder="${esc(tp(ph))}"` : ''}>${esc(D[f] || '')}</textarea><span class="fe"></span></label>`;
+  const names = uniqueRecent('NguoiThucHien', [S.name].concat(allDD().slice().sort(ddSortDesc).map(x => x.NguoiDo)));
+  return {
+    title: cur ? 'ddEditTitle' : 'ddNewTitle', back, tab: 'cv', noPtr: true,
+    html: `
+      <form id="f-dd" class="form" autocomplete="off" novalidate>
+        <section class="card pad slim sc-sumcard dd-${esc(cur ? cur.MucDo : (last ? last.MucDo : 'A'))}">
+          <div class="mini-top"><span class="tb-id">${esc(tb.ID)}</span>${tb.MaNhaMay ? `<span class="tb-ma">${esc(tb.MaNhaMay)}</span>` : ''}<span class="sp"></span>${cur ? `<span class="sc-no">${esc(cur.SoPhieu)}</span>` : ''}</div>
+          ${bi(tb.TenMay, tb.TenMayZH, 'tb-name')}
+          ${ddLoaiBi(loai, 'big')}
+          ${last ? `<a class="small link-row" href="#/dd/${encodeURIComponent(last.SoPhieu)}">${t('ddLastWas', fmtDate(last.TGDo), last.MucDo)}</a>` : ''}
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('gauge')}${t('ddStd')}</div>
+          <div class="fld" data-fld="Nguong"><button type="button" class="select" data-act="ddPickChuan">${ddChuanLabel()}${ic('down')}</button><span class="fe"></span></div>
+          <div id="dd-ng">${ddNgHtml()}</div>
+          ${loai === 'CACHDIEN' ? `<div class="fld" data-fld="DienApThu"><span class="lb">${t('ddVolt')}</span>
+            <div class="seg dd-volt">${DD_VOLTS.map(v => `<label><input type="radio" name="dd-v" value="${v}" data-df="DienApThu" ${String(D.DienApThu) === v ? 'checked' : ''}><span>${v}</span></label>`).join('')}</div>
+            <span class="fe"></span></div>` : ''}
+          <p class="muted small">${t('ddStdHint')}</p>
+        </section>
+        <section class="card pad ck-card">
+          <div class="card-h flat" data-fld="DiemDo">${ic(DD_ICON[loai])}${t('ddPoints')}<span class="sp"></span><span class="muted small" id="dd-sum"></span></div>
+          <p class="muted small">${t('ddPtHint_' + loai)}</p>
+          <div id="dd-pts">${F.pts.map((p, i) => ddPtForm(p, i)).join('')}</div>
+          <button type="button" class="btn block" data-act="ddPtAdd">${ic('plus')}${t('ddPtAdd')}</button>
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('clock')}${t('btExec')}</div>
+          <label class="fld" data-fld="TGDo"><span class="lb">${t('ddTime')} <b class="req">*</b></span>
+            <input type="datetime-local" data-df="TGDo" value="${esc(tsToInput(D.TGDo))}"><span class="fe"></span></label>
+          ${txt('NguoiDo', 'ddNguoiDo', true, 'maxlength="150" list="dl-ng"')}
+          ${txt('NhaThau', 'ddDonVi', false, 'maxlength="150" list="dl-nt"', 'ddDonViPh')}
+          ${txt('ThietBiDo', 'ddThietBiDo', false, 'maxlength="150"', 'ddThietBiDoPh_' + loai)}
+          ${txt('DieuKien', 'ddDieuKien', false, 'maxlength="300"', 'ddDieuKienPh')}
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('wrench')}${t('ddConclusion')}</div>
+          ${area('DeXuat', 'ddDeXuat', 'ddDeXuatPh')}
+          <label class="fld" data-fld="ChuKyThang"><span class="lb">${t('ddChuKy')}</span>
+            <div class="ck-num"><input data-df="ChuKyThang" value="${esc(D.ChuKyThang || '')}" inputmode="numeric" maxlength="3" placeholder="${esc(tp('ddChuKyPh'))}"><span class="ck-unit">${t('monthsUnit')}</span></div>
+            <span class="fe"></span><span class="muted small">${t('ddChuKyHint')}</span></label>
+          ${area('GhiChu', 'fGhiChu')}
+        </section>
+        ${datalist('dl-ng', names)}${datalist('dl-nt', hdNames())}
+        <div class="form-actions">
+          <a class="btn" href="#/${back}">${t('cancel')}</a>
+          <button class="btn primary" type="submit">${ic('check')}${t('save')}</button>
+        </div>
+      </form>`,
+    after: () => {
+      const form = $('#f-dd');
+      form.addEventListener('submit', saveDdForm);
+      form.addEventListener('input', e => { clearFieldErr(e); ddFormInput(e.target); });
+      form.addEventListener('change', e => ddFormInput(e.target));
+      ddSum();
+    }
+  };
+}
+function ddChuanLabel() {
+  const F = S.ddForm;
+  const x = ddChuanTr(F.loai, F.chuan);
+  return `<span class="grow">${bi(x.vi, x.zh)}</span>`;
+}
+function ddNgHtml() {
+  const F = S.ddForm;
+  if (F.chuan !== 'TUY') return `<div class="small muted dd-zones">${ddZonesHtml(F.loai, F.ng)}</div>`;
+  if (F.loai === 'CACHDIEN') {
+    return `<label class="fld"><span class="lb">${t('ddMinMOhm')}</span><div class="ck-num"><input data-ng="0" value="${esc(String(F.ng[0] || '').replace('.', ','))}" inputmode="decimal" maxlength="10"><span class="ck-unit">MΩ</span></div></label>`;
+  }
+  return `<div class="grid3 dd-ng3">${['A/B', 'B/C', 'C/D'].map((lb, i) => `<label class="fld"><span class="lb">${esc(lb)}</span>
+    <input data-ng="${i}" value="${esc(String(F.ng[i] || '').replace('.', ','))}" inputmode="decimal" maxlength="10"></label>`).join('')}</div>
+    <div class="small muted">${t(F.loai === 'NHIET' ? 'ddCustomNhiet' : 'ddCustomRung')}</div>`;
+}
+/** Ô nhập một điểm đo */
+function ddPtForm(p, i) {
+  const F = S.ddForm, L = F.loai;
+  const inp = (k, lb, ph) => `<label class="fld"><span class="lb">${lb}</span><input data-pk="${k}" data-i="${i}" value="${esc(String(p[k] === undefined ? '' : p[k]).replace('.', ','))}" inputmode="decimal" maxlength="12" ${ph ? `placeholder="${esc(ph)}"` : ''}></label>`;
+  let vals;
+  if (L === 'NHIET') vals = `<div class="grid2">${inp('td', t('ddTdo'))}${inp('tr', t('ddTref'))}</div>`;
+  else if (L === 'RUNG') vals = `<div class="grid3 eq">${inp('h', t('ddH'), 'mm/s')}${inp('v', t('ddV'), 'mm/s')}${inp('a', t('ddA'), 'mm/s')}</div>`;
+  else {
+    const more = ['l12', 'l23', 'l31', 'pi'].some(k => p[k] !== undefined && p[k] !== '');
+    vals = `<div class="grid3 eq">${inp('l1', 'L1–E', 'MΩ')}${inp('l2', 'L2–E', 'MΩ')}${inp('l3', 'L3–E', 'MΩ')}</div>
+      <details class="dd-more"${more ? ' open' : ''}><summary>${t('ddMoreIR')}</summary>
+        <div class="grid3 eq">${inp('l12', 'L1–L2', 'MΩ')}${inp('l23', 'L2–L3', 'MΩ')}${inp('l31', 'L3–L1', 'MΩ')}</div>
+        <div class="grid3 eq">${inp('pi', 'PI', 'R10/R1')}</div></details>`;
+  }
+  const c = ddCalc(L, F.ng, p);
+  return `<div class="ck-item dd-ptf${c && c.m ? ' dd-' + c.m : ''}" data-fld="DiemDo:${i + 1}">
+    <div class="ck-head"><span class="mau-no">${i + 1}</span>
+      <input class="grow dd-ptname" data-pk="t" data-i="${i}" value="${esc(p.t || '')}" maxlength="150" placeholder="${esc(tp('ddPtNamePh_' + L))}">
+      <button type="button" class="hbtn sm danger" data-act="ddPtDel" data-i="${i}" aria-label="${esc(tp('delete'))}">${ic('trash')}</button></div>
+    ${vals}
+    <div class="dd-ptres" id="ddr-${i}">${ddResHtml(c)}</div>
+    <input class="dd-ptnote" data-pk="g" data-i="${i}" value="${esc(p.g || '')}" maxlength="300" placeholder="${esc(tp('ckNotePh'))}">
+    <span class="fe"></span>
+  </div>`;
+}
+function ddResHtml(c) {
+  const F = S.ddForm;
+  if (!c) return `<span class="muted small">${t('ddEnterVals')}</span>`;
+  if (c.err) return `<span class="bad-n small">${t(c.err)}</span>`;
+  return `<b>${esc(ddXTxt(F.loai, c.x))}</b>${ddMucPill(c.m)}`;
+}
+function ddSum() {
+  const F = S.ddForm, el = $('#dd-sum');
+  if (!F || !el) return;
+  const ms = F.pts.map(p => ddCalc(F.loai, F.ng, p)).filter(c => c && c.m).map(c => c.m);
+  const worst = ms.reduce((w, m) => (DD_MUC.indexOf(m) > DD_MUC.indexOf(w) ? m : w), ms.length ? 'A' : '');
+  el.innerHTML = ms.length ? `${t('ddNPoints', F.pts.length)} · ${ddMucPill(worst, 'sm')}` : t('ddNPoints', F.pts.length);
+}
+function ddPtRefresh(i) {
+  const F = S.ddForm;
+  const box = $(`#f-dd [data-fld="DiemDo:${i + 1}"]`);
+  if (!box || !F.pts[i]) return;
+  const c = ddCalc(F.loai, F.ng, F.pts[i]);
+  $('#ddr-' + i).innerHTML = ddResHtml(c);
+  DD_MUC.forEach(m => box.classList.toggle('dd-' + m, !!(c && c.m === m)));
+}
+function ddFormInput(el) {
+  const F = S.ddForm;
+  if (!F) return;
+  if (el.dataset.df) { F.d[el.dataset.df] = el.type === 'datetime-local' ? inputToTs(el.value) : el.value; return; }
+  if (el.dataset.ng !== undefined) {
+    F.ng[Number(el.dataset.ng)] = String(el.value).trim().replace(',', '.');
+    F.pts.forEach((p, i) => ddPtRefresh(i));
+    ddSum();
+    return;
+  }
+  if (el.dataset.pk) {
+    const p = F.pts[Number(el.dataset.i)];
+    if (!p) return;
+    p[el.dataset.pk] = el.value;
+    if (el.dataset.pk !== 't' && el.dataset.pk !== 'g') { ddPtRefresh(Number(el.dataset.i)); ddSum(); }
+  }
+}
+const DD_FIELD_KEYS = { TGDo: 'ddTime', NguoiDo: 'ddNguoiDo', Nguong: 'ddStd', DiemDo: 'ddPoints', ChuKyThang: 'ddChuKy', DienApThu: 'ddVolt', IDThietBi: 'scMay', Loai: 'ddType' };
+function ddFieldName(f, x) { const b = DD_FIELD_KEYS[f] ? tr(DD_FIELD_KEYS[f]) : { vi: f, zh: f }; return x && x.line ? { vi: `${b.vi} ${x.line}`, zh: `${b.zh} ${x.line}` } : b; }
+
+async function saveDdForm(ev) {
+  ev.preventDefault();
+  if (!needOnline()) return;
+  const form = ev.target;
+  const F = S.ddForm;
+  if (!F) return;
+  const D = F.d;
+  $$('.has-err', form).forEach(el => { el.classList.remove('has-err'); const fe = $('.fe', el); if (fe) fe.innerHTML = ''; });
+  let bad = false;
+  const err = (f, k) => { scFieldErr(form, f, k); bad = true; };
+  if (!D.TGDo) err('TGDo', 'eRequired');
+  if (!String(D.NguoiDo || '').trim()) err('NguoiDo', 'eRequired');
+  if (String(D.ChuKyThang || '').trim() && (!/^\d{1,3}$/.test(String(D.ChuKyThang).trim()) || Number(D.ChuKyThang) < 1 || Number(D.ChuKyThang) > 120)) err('ChuKyThang', 'eNumber');
+  if (F.chuan === 'TUY') {
+    const need = F.loai === 'CACHDIEN' ? 1 : 3;
+    const v = F.ng.slice(0, need).map(x => ddNum(x));
+    if (v.length < need || v.some(x => x === null || x === '' || Number(x) <= 0) || (need === 3 && !(Number(v[0]) < Number(v[1]) && Number(v[1]) < Number(v[2])))) err('Nguong', 'ddNgBad');
+  }
+  if (!F.pts.length) { toast('ddNeedPoint', 'err'); bad = true; }
+  F.pts.forEach((p, i) => {
+    const c = ddCalc(F.loai, F.ng, p);
+    if (!String(p.t || '').trim()) err('DiemDo:' + (i + 1), 'ddPtNameReq');
+    else if (!c) err('DiemDo:' + (i + 1), 'ddEnterVals');
+    else if (c.err) err('DiemDo:' + (i + 1), 'eNumber');
+  });
+  if (bad) { toast('eInvalid', 'err'); const first = $('.has-err', form); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+  const dd = {};
+  ['TGDo', 'NguoiDo', 'NhaThau', 'ThietBiDo', 'DieuKien', 'DienApThu', 'DeXuat', 'ChuKyThang', 'GhiChu'].forEach(f => { dd[f] = String(D[f] === undefined || D[f] === null ? '' : D[f]).trim(); });
+  dd.Chuan = F.chuan;
+  if (F.chuan === 'TUY') dd.Nguong = F.ng.slice(0, F.loai === 'CACHDIEN' ? 1 : 3).map(x => ddNum(x));
+  const keys = F.loai === 'NHIET' ? ['td', 'tr'] : DD_KEYS[F.loai].concat(F.loai === 'CACHDIEN' ? ['pi'] : []);
+  const diem = F.pts.map(p => {
+    const o = { t: String(p.t || '').trim(), g: String(p.g || '').trim() };
+    keys.forEach(k => { const v = String(p[k] === undefined ? '' : p[k]).trim(); if (v !== '') o[k] = F.loai === 'CACHDIEN' && k !== 'pi' ? irNum(v) : ddNum(v); });
+    return o;
+  });
+  const payload = F.mode === 'new' ? { op: 'create', dd: Object.assign({ IDThietBi: F.id, Loai: F.loai }, dd), diem }
+    : { op: 'capnhat', so: F.so, ngaySuaCu: F.orig || '', dd, diem };
+  busy(form, true);
+  try {
+    const r = await api('ddAction', payload);
+    mergeDD([r.dd]);
+    S.ddForm = null;
+    const so = r.dd.SoPhieu;
+    const warn = r.dd.MucDo === 'C' || r.dd.MucDo === 'D';
+    toast(r.unchanged ? tr('scNoChange') : (F.mode === 'new' ? tr('ddSaved', [so, r.dd.MucDo]) : tr('saved')), warn ? 'warn' : 'ok');
+    const detail = '#/dd/' + encodeURIComponent(so);
+    if (F.mode === 'edit' && S.prevHash === detail) history.back(); else location.replace(detail);
+    if (F.mode === 'new' && warn) setTimeout(() => offerScFromDd(so), 400);
+  } catch (e) {
+    if (e.code === 'INVALID' && e.extra && e.extra.errors) showErrs(form, e.extra.errors, ddFieldName);
+    else await ddHandleErr(e);
+  } finally { if (form.isConnected) busy(form, false); }
+}
+async function ddHandleErr(e) {
+  if (e.code === 'CONFLICT') {
+    const ex = e.extra || {};
+    closeSheet();
+    if (await confirmDlg('eConflict', tr('scConflictMsg', [ex.nguoiSua || '?', fmtTime(ex.ngaySua)]), { ok: 'reload' })) {
+      S.ddForm = null;
+      await refresh(true);
+      const p = route();
+      if (p[0] === 'dd' && p[1] && p[2]) location.replace('#/dd/' + encodeURIComponent(p[1])); else render();
+    }
+  } else if (e.code === 'FORBIDDEN' && e.extra && e.extra.hours) toast(tr('ktEditWindow', [e.extra.hours]), 'err');
+  else if (e.code !== 'AUTH') toast(errText(e), 'err');
+}
+async function offerScFromDd(so) {
+  const dd = ddBySo(so);
+  if (!dd) return;
+  if (await confirmDlg(tr('ddOfferScQ', [dd.SoDiemCanhBao]), 'ddOfferScMsg', { ok: 'btMakeSc' })) {
+    location.hash = '#/sc-moi/' + encodeURIComponent(dd.IDThietBi) + '/' + encodeURIComponent(so);
+  }
+}
+/** Mô tả phiếu sửa chữa điền sẵn từ các điểm đo mức C/D */
+function scMoTaFromDd(dd) {
+  const bad = ddPts(dd).filter(p => p.m === 'C' || p.m === 'D');
+  const head = `[${dd.SoPhieu}] ${tr('ddL' + dd.Loai).vi} – ${tr('ddM' + dd.MucDo).vi}`;
+  return head + ':\n' + bad.map(p => `- ${p.t}: ${ddXTxt(dd.Loai, p.x)} (${p.m})${p.g ? ` – ${p.g}` : ''}`).join('\n') + (dd.DeXuat ? `\n${tr('ddDeXuat').vi}: ${dd.DeXuat}` : '');
+}
+async function ddDelete(so) {
+  const dd = ddBySo(so);
+  if (!dd || !needOnline()) return;
+  if (!(await confirmDlg(tr('ddDeleteQ', [so]), 'ktDeleteMsg', { ok: 'delete', danger: true }))) return;
+  try {
+    await api('ddAction', { op: 'xoa', so, ngaySuaCu: dd.NgaySua || '' });
+    removeDD(so);
+    toast(tr('scDeleted', [so]), 'ok');
+    location.replace('#/dd');
+  } catch (e) { await ddHandleErr(e); }
+}
+/** Chọn máy (nếu chưa có) rồi loại đo → mở form ghi phiếu đo */
+async function ddNewFlow(id) {
+  if (!id) {
+    id = await picker({ title: 'scMay', items: tbPickItems() });
+    if (!id) return;
+  }
+  const items = DD_LOAI.map(l => {
+    const x = tr('ddL' + l), last = ddOf(id, l)[0];
+    return { v: l, vi: x.vi, zh: x.zh, sub: last ? tp('ddLastWas', fmtDate(last.TGDo), last.MucDo) : '' };
+  });
+  const l = await picker({ title: 'ddType', items });
+  if (!l) return;
+  location.hash = '#/dd-moi/' + encodeURIComponent(id) + '/' + l;
+}
+
+/* ---------------------- RCA / 5 Why + hành động khắc phục ---------------------- */
+/* RC-yyyy-nnnn nối với phiếu sửa chữa (SoPhieu + PhieuLienQuan). Trạng thái hiển thị (từ dữ liệu):
+ * PHANTICH (chưa có nguyên nhân gốc) → KHACPHUC (còn hành động chưa xong) → CHOHL (chờ quản lý kiểm tra hiệu lực)
+ * → DONG. HUY = đã hủy. */
+const RCA_LYDO = ['LON', 'LAPLAI', 'ANTOANSP', 'ATLD', 'KHAC'];
+const RCA_6M = ['NGUOI', 'MAY', 'VATLIEU', 'PHUONGPHAP', 'MOITRUONG', 'DOLUONG'];
+const HDK_LOAI = ['TAMTHOI', 'KHACPHUC', 'PHONGNGUA'];
+const RCA_ORDER = ['PHANTICH', 'KHACPHUC', 'CHOHL', 'DONG', 'HUY'];
+const RCA_TABS = [{ id: 'MO', key: 'rcaTabOpen' }, { id: 'HD', key: 'rcaTabActs' }, { id: 'GY', key: 'rcaTabSuggest' }, { id: 'DONG', key: 'rcaTabClosed' }];
+
+function allRCA() { return (S.data && S.data.rca) || []; }
+function allHDK() { return (S.data && S.data.hanhDong) || []; }
+function rcaBySo(so) { const k = String(so || '').toUpperCase(); return allRCA().find(x => String(x.SoRCA).toUpperCase() === k) || null; }
+function hdkOf(so) { const k = String(so || '').toUpperCase(); return allHDK().filter(a => String(a.SoRCA).toUpperCase() === k).sort((a, b) => (Number(a.STT) || 0) - (Number(b.STT) || 0)); }
+function rcaSortDesc(a, b) { return String(b.NgayTao || '').localeCompare(String(a.NgayTao || '')) || String(b.SoRCA).localeCompare(String(a.SoRCA)); }
+function mergeRCA(rca, acts) {
+  if (!S.data) return;
+  const arr = S.data.rca || (S.data.rca = []);
+  const i = arr.findIndex(x => x.SoRCA === rca.SoRCA);
+  if (i >= 0) arr[i] = rca; else arr.push(rca);
+  if (acts) S.data.hanhDong = allHDK().filter(a => a.SoRCA !== rca.SoRCA).concat(acts);
+  saveCache();
+}
+function removeRCA(so) {
+  if (!S.data) return;
+  S.data.rca = allRCA().filter(x => x.SoRCA !== so);
+  S.data.hanhDong = allHDK().filter(a => a.SoRCA !== so);
+  saveCache();
+}
+function rcaScList(r) { return [r.SoPhieu].concat(String(r.PhieuLienQuan || '').split(',')).map(s => String(s || '').trim()).filter(Boolean); }
+function rcaOfSc(so) { const k = String(so || '').toUpperCase(); return allRCA().filter(r => rcaScList(r).some(s => s.toUpperCase() === k)).sort((a, b) => (a.TrangThai === 'HUY') - (b.TrangThai === 'HUY') || rcaSortDesc(a, b)); }
+function rcaOfTb(id) { const k = String(id).toUpperCase(); return allRCA().filter(r => String(r.IDThietBi).toUpperCase() === k).sort(rcaSortDesc); }
+function hdkLate(a, today) { return !a.NgayXong && a.Han && a.Han < (today || dToday()); }
+/** { st, acts, done, late, hlLate } */
+function rcaStatus(r, today) {
+  today = today || dToday();
+  const acts = hdkOf(r.SoRCA);
+  const done = acts.filter(a => a.NgayXong).length;
+  const late = r.TrangThai === 'MO' ? acts.filter(a => hdkLate(a, today)).length : 0;
+  let st;
+  if (r.TrangThai === 'HUY' || r.TrangThai === 'DONG') st = r.TrangThai;
+  else if (!String(r.NguyenNhanGoc || '').trim()) st = 'PHANTICH';
+  else if (!acts.length || done < acts.length) st = 'KHACPHUC';
+  else st = 'CHOHL';
+  const hlLate = st === 'CHOHL' && r.HanKiemTraHL && r.HanKiemTraHL < today;
+  return { st, acts, done, late, hlLate };
+}
+function rcaOpenStats() {
+  const today = dToday();
+  let open = 0, late = 0;
+  allRCA().forEach(r => { if (r.TrangThai !== 'MO') return; open++; late += rcaStatus(r, today).late; });
+  return { open, late };
+}
+function rcaPill(st) { return `<span class="pill rc-${esc(st)}">${t('rc' + st)}</span>`; }
+function rcaJson(s, d) { return jparse(s, d); }
+/**
+ * Gợi ý RCA cho phiếu sửa chữa: máy hỏng ≥ RCA_LapLai lần trong RCA_SoNgay ngày (tính tới phiếu này)
+ * hoặc phiếu này dừng máy ≥ RCA_GioDung giờ. → { rep: số lần, win: [phiếu trong khoảng], long: phút } | null
+ */
+function rcaSuggest(sc) {
+  if (!sc || sc.TrangThaiPhieu === 'HUY') return null;
+  const lap = cfgInt('RCA_LapLai', 3), ngay = cfgInt('RCA_SoNgay', 90), gio = cfgInt('RCA_GioDung', 8);
+  const t1 = String(sc.TGBao || '').slice(0, 10), t0 = dAdd(t1, -ngay, 'NGAY');
+  const win = scOfTb(sc.IDThietBi).filter(x => x.TrangThaiPhieu !== 'HUY' && String(x.TGBao).slice(0, 10) > t0 && String(x.TGBao) <= String(sc.TGBao));
+  const d = scDownMin(sc);
+  const long = d && d.min >= gio * 60 ? d.min : 0;
+  const rep = win.length >= lap ? win.length : 0;
+  return rep || long ? { rep, win, long, lap, ngay, gio } : null;
+}
+function rcaSugTags(sg) {
+  const out = [];
+  if (sg.rep) out.push(`<span class="tag warn">${ic('repeat')}${t('rcaSugRep', sg.rep, sg.ngay)}</span>`);
+  if (sg.long) out.push(`<span class="tag bad">${ic('clock')}${t('rcaSugLong', fmtDur(sg.long))}</span>`);
+  return out.join('');
+}
+/** Phiếu sửa chữa nên phân tích RCA (chưa có RCA nào phủ) — mỗi máy một phiếu mới nhất */
+function rcaCandidates() {
+  const covered = new Set();
+  allRCA().forEach(r => { if (r.TrangThai !== 'HUY') rcaScList(r).forEach(s => covered.add(s.toUpperCase())); });
+  const from = dAdd(dToday(), -cfgInt('RCA_SoNgay', 90), 'NGAY');
+  const byTb = new Map();
+  allSC().filter(x => x.TrangThaiPhieu !== 'HUY' && String(x.TGBao).slice(0, 10) >= from).sort(scSortDesc).forEach(sc => {
+    if (byTb.has(sc.IDThietBi) || covered.has(String(sc.SoPhieu).toUpperCase())) return;
+    const sg = rcaSuggest(sc);
+    if (!sg) return;
+    if (sg.rep && !sg.long && sg.win.some(x => covered.has(String(x.SoPhieu).toUpperCase()))) return;
+    byTb.set(sc.IDThietBi, { sc, sg });
+  });
+  return [...byTb.values()];
+}
+
+/* ---- Trang máy ---- */
+function tbRcaSection(tb) {
+  const list = rcaOfTb(tb.ID);
+  if (!list.length) return '';
+  return `<section class="card">
+    <div class="card-h">${ic('target')}${t('rcaShort')}<span class="count">${list.length}</span></div>
+    <div class="mini-list">${list.slice(0, 20).map(r => rcaMini(r, false)).join('')}</div>
+  </section>`;
+}
+function rcaMini(r, withTb) {
+  const s = rcaStatus(r);
+  const tb = withTb ? tbById(r.IDThietBi) : null;
+  return `<a class="mini rc-${esc(s.st)}" href="#/rca/${encodeURIComponent(r.SoRCA)}">
+    <div class="mini-main">
+      <div class="mini-top"><span class="sc-no">${esc(r.SoRCA)}</span><span class="muted small">${esc(fmtDate(r.NgayPhanTich || r.NgayTao))}</span></div>
+      ${tb ? `<div class="sc-tbline"><span class="tb-id">${esc(tb.ID)}</span> <span class="tb-name">${esc(tb.TenMay)}</span></div>` : ''}
+      <div class="sc-desc one">${esc(r.TieuDe)}</div>
+      <div class="sc-meta">${s.acts.length ? `<span class="muted small">${t('rcaActProg', s.done, s.acts.length)}</span>` : ''}${s.late ? `<span class="tag bad">${t('rcaLateN', s.late)}</span>` : ''}</div>
+    </div>
+    ${rcaPill(s.st)}
+  </a>`;
+}
+
+/* ---- Danh sách ---- */
+function rcaMatch(r) {
+  const tb = tbById(r.IDThietBi);
+  return tbMatchF(tb || { ID: r.IDThietBi }, S.rcaf, [r.SoRCA, r.SoPhieu, r.TieuDe, r.MoTa, r.NguyenNhanGoc, r.NhomPhanTich]);
+}
+function rcaListData(tab) {
+  const today = dToday();
+  if (tab === 'MO') return allRCA().filter(r => r.TrangThai === 'MO' && rcaMatch(r)).map(r => ({ r, s: rcaStatus(r, today) }))
+    .sort((a, b) => (b.s.late - a.s.late) || RCA_ORDER.indexOf(a.s.st) - RCA_ORDER.indexOf(b.s.st) || rcaSortDesc(a.r, b.r));
+  if (tab === 'DONG') return allRCA().filter(r => (r.TrangThai === 'DONG' || r.TrangThai === 'HUY') && rcaMatch(r)).map(r => ({ r, s: rcaStatus(r, today) })).sort((a, b) => rcaSortDesc(a.r, b.r));
+  if (tab === 'HD') {
+    const out = [];
+    allRCA().forEach(r => { if (r.TrangThai === 'MO' && rcaMatch(r)) hdkOf(r.SoRCA).forEach(a => { if (!a.NgayXong) out.push({ r, a }); }); });
+    return out.sort((x, y) => String(x.a.Han || '9').localeCompare(String(y.a.Han || '9')) || rcaSortDesc(x.r, y.r));
+  }
+  return rcaCandidates().filter(x => tbMatchF(tbById(x.sc.IDThietBi) || { ID: x.sc.IDThietBi }, S.rcaf, [x.sc.SoPhieu, x.sc.MoTa]));
+}
+function viewRcaList() {
+  if (!S.data) return loadingView();
+  const f = S.rcaf;
+  const st = rcaOpenStats();
+  const nSug = rcaCandidates().length;
+  const nActs = allRCA().filter(r => r.TrangThai === 'MO').reduce((n, r) => n + hdkOf(r.SoRCA).filter(a => !a.NgayXong).length, 0);
+  return {
+    live: true, restoreScroll: true, title: 'rca', back: 'cv', tab: 'cv',
+    html: `
+      <div class="toolbar sticky">
+        <div class="seg sc-tabs">${RCA_TABS.map(x => {
+          const lb = tr(x.key);
+          const n = { MO: st.open, HD: st.late || nActs, GY: nSug, DONG: 0 }[x.id];
+          const cls = { MO: 'rc-KHACPHUC', HD: st.late ? 'kh-QUAHAN' : 'rc-KHACPHUC', GY: 'kh-DENHAN' }[x.id];
+          return `<a data-act="rcaTab" data-t="${x.id}" class="${x.id === f.tab ? 'on' : ''}">${bi(lb.vi, lb.zh)}${n ? `<span class="tcount ${cls}">${n}</span>` : ''}</a>`;
+        }).join('')}</div>
+        <div class="search">${ic('search')}<input type="search" id="rca-q" value="${esc(f.q)}" placeholder="${esc(tp('rcaSearch'))}" autocomplete="off"></div>
+        <div class="chips">
+          <button class="chip${f.kv ? ' on' : ''}" data-act="rcaFilter" data-k="kv">${ic('map')}${f.kv ? dmBi('KHUVUC', f.kv) : t('allAreas')}</button>
+          <button class="chip${f.nhom ? ' on' : ''}" data-act="rcaFilter" data-k="nhom">${ic('device')}${f.nhom ? dmBi('NHOMTB', f.nhom) : t('allGroups')}</button>
+          ${isQL() ? `<button class="chip" data-act="nguongSettings">${ic('gear')}${t('rcaSugSettings')}</button>` : ''}
+        </div>
+      </div>
+      <div class="list-bar"><span id="rca-count" class="muted"></span><span class="sp"></span>
+        <button class="link" data-act="rcaCsv">${t('exportCsv')}</button></div>
+      <div id="rca-list" class="tb-list"></div>
+      ${f.tab === 'GY' ? `<p class="muted small">${t('rcaSugHint', cfgInt('RCA_LapLai', 3), cfgInt('RCA_SoNgay', 90), cfgInt('RCA_GioDung', 8))}</p>` : ''}
+      <a class="fab" href="#/rca-moi" aria-label="${esc(tp('rcaNew'))}">${ic('plus')}</a>`,
+    after: () => {
+      drawRcaList();
+      $('#rca-q').addEventListener('input', debounce(e => { S.rcaf.q = e.target.value; drawRcaList(); }, 150));
+    }
+  };
+}
+function drawRcaList() {
+  const box = $('#rca-list');
+  if (!box) return;
+  const tab = S.rcaf.tab;
+  const list = rcaListData(tab);
+  const today = dToday();
+  $('#rca-count').innerHTML = tab === 'HD' ? t('rcaNActs', list.length) : (tab === 'GY' ? t('scNTickets', list.length) : t('rcaN', list.length));
+  box.classList.toggle('bare', !list.length);
+  const filtered = S.rcaf.q || S.rcaf.kv || S.rcaf.nhom;
+  if (!list.length) {
+    const ok = !filtered && (tab === 'HD' || tab === 'GY' || (tab === 'MO' && allRCA().length));
+    box.innerHTML = `<div class="empty${ok ? ' ok' : ''}">${ic(ok ? 'checkCircle' : 'target')}${filtered ? t('noResult')
+      : t({ MO: allRCA().length ? 'rcaNoOpen' : 'rcaNone', HD: 'rcaNoActs', GY: 'rcaNoSug', DONG: 'rcaNoClosed' }[tab])}</div>`;
+    return;
+  }
+  if (tab === 'HD') {
+    box.innerHTML = list.slice(0, 300).map(({ r, a }) => {
+      const late = hdkLate(a, today);
+      const tb = tbById(r.IDThietBi);
+      return `<a class="sc-item ${late ? 'kh-QUAHAN' : 'rc-KHACPHUC'}" href="#/rca/${encodeURIComponent(r.SoRCA)}">
+        <div class="tb-top">${hdkTag(a.Loai)}<span class="sp"></span>${a.Han ? hdkDueHtml(a, today) : `<span class="muted small">${t('rcaNoDeadline')}</span>`}</div>
+        <div class="hdk-text">${esc(a.NoiDung)}</div>
+        <div class="sc-meta"><span class="sc-no">${esc(r.SoRCA)}</span><span class="muted small ell">${esc(r.IDThietBi)} ${esc(tb ? tb.TenMay : '')}</span>
+          <span class="sp"></span>${a.PhuTrach ? `<span class="small">${ic('user')} ${esc(a.PhuTrach)}</span>` : ''}</div>
+      </a>`;
+    }).join('');
+    return;
+  }
+  if (tab === 'GY') {
+    box.innerHTML = list.map(({ sc, sg }) => `<div class="sc-item rc-sug">
+      <a class="rc-sug-main" href="#/sc/${encodeURIComponent(sc.SoPhieu)}">
+        <div class="tb-top"><span class="sc-no">${esc(sc.SoPhieu)}</span>${scPill(sc.TrangThaiPhieu)}<span class="sp"></span><span class="muted small">${esc(fmtShort(sc.TGBao))}</span></div>
+        ${tbLine(sc.IDThietBi)}
+        <div class="sc-desc one">${esc(sc.MoTa)}</div>
+      </a>
+      <div class="sc-meta">${rcaSugTags(sg)}<span class="sp"></span><a class="btn sm primary" href="#/rca-moi/${encodeURIComponent(sc.SoPhieu)}">${ic('target')}${t('rcaDo')}</a></div>
+    </div>`).join('');
+    return;
+  }
+  box.innerHTML = list.slice(0, 300).map(({ r, s }) => {
+    const tb = tbById(r.IDThietBi);
+    return `<a class="sc-item rc-${esc(s.st)}" href="#/rca/${encodeURIComponent(r.SoRCA)}">
+      <div class="tb-top"><span class="sc-no">${esc(r.SoRCA)}</span>${rcaPill(s.st)}<span class="sp"></span><span class="muted small">${esc(fmtDate(r.NgayPhanTich || r.NgayTao))}</span></div>
+      <div class="sc-tbline"><span class="tb-id">${esc(r.IDThietBi)}</span> ${tb ? bi(tb.TenMay, tb.TenMayZH, 'tb-name') : ''}</div>
+      <div class="sc-desc">${esc(r.TieuDe)}</div>
+      <div class="sc-meta">${r.SoPhieu ? `<span class="sc-chip">${esc(r.SoPhieu)}</span>` : ''}${s.acts.length ? `<span class="muted small">${t('rcaActProg', s.done, s.acts.length)}</span>` : ''}
+        ${s.late ? `<span class="tag bad">${t('rcaLateN', s.late)}</span>` : ''}${s.hlLate ? `<span class="tag warn">${t('rcaHlLate')}</span>` : ''}</div>
+    </a>`;
+  }).join('');
+}
+function hdkTag(l) { return `<span class="tag hdk-${esc(l)}">${t('hdk' + l)}</span>`; }
+function hdkDueHtml(a, today) {
+  if (a.NgayXong) return `<span class="due kh-CHUADEN">${ic('check')}${t('rcaDoneOn', fmtDate(a.NgayXong))}</span>`;
+  const d = dDiff(today || dToday(), a.Han);
+  const x = d < 0 ? tr('dueLate', [-d]) : (d === 0 ? tr('dueToday') : (d === 1 ? tr('dueTomorrow') : tr('dueIn', [d])));
+  return `<span class="due kh-${d < 0 ? 'QUAHAN' : (d <= 7 ? 'DENHAN' : 'CHUADEN')}">${ic('calendar')}${bi(`${x.vi} · ${fmtDate(a.Han)}`, x.zh)}</span>`;
+}
+function exportRcaCsv() {
+  const head = csvHead([['', 'Số RCA', '分析编号'], ['', 'Trạng thái', '状态'], ['', 'ID', ''], ['', 'Tên máy', '设备名称'], ['', 'Phiếu sửa chữa', '维修单'],
+    ['', 'Phiếu liên quan', '相关维修单'], ['', 'Sự cố', '故障'], ['', 'Lý do phân tích', '分析原因'], ['', 'Nhóm phân tích', '分析小组'], ['', 'Ngày phân tích', '分析日期'],
+    ['', 'Tại sao 1', '为什么1'], ['', 'Tại sao 2', '为什么2'], ['', 'Tại sao 3', '为什么3'], ['', 'Tại sao 4', '为什么4'], ['', 'Tại sao 5', '为什么5'],
+    ['', 'Nguyên nhân gốc', '根本原因'], ['', 'Nhóm 6M', '6M类别'], ['', 'STT', '序号'], ['', 'Loại hành động', '措施类型'], ['', 'Hành động', '措施'],
+    ['', 'Phụ trách', '责任人'], ['', 'Hạn', '期限'], ['', 'Ngày xong', '完成日期'], ['', 'Kết quả', '结果'], ['', 'Hiệu lực', '有效性'], ['', 'Ngày kiểm tra', '验证日期']]);
+  const rows = [head];
+  const recs = S.rcaf.tab === 'DONG' ? rcaListData('DONG').map(x => x.r) : allRCA().filter(rcaMatch).sort(rcaSortDesc);
+  recs.forEach(r => {
+    const s = rcaStatus(r), tb = tbById(r.IDThietBi), why = rcaJson(r.Why, []);
+    const base = [r.SoRCA, tr('rc' + s.st).vi, r.IDThietBi, tb ? tb.TenMay : '', r.SoPhieu, r.PhieuLienQuan, r.TieuDe,
+      String(r.LyDo || '').split(',').filter(Boolean).map(x => tr('rcaLD' + x).vi).join('; '), r.NhomPhanTich, r.NgayPhanTich,
+      why[0] || '', why[1] || '', why[2] || '', why[3] || '', why[4] || '', r.NguyenNhanGoc, r.NhomNguyenNhan ? tr('m6' + r.NhomNguyenNhan).vi : ''];
+    const tail = [r.KetQuaHL ? tr('rcaHL' + r.KetQuaHL).vi : '', r.TGKiemTraHL];
+    if (!s.acts.length) rows.push(base.concat(['', '', '', '', '', '', ''], tail));
+    s.acts.forEach(a => rows.push(base.concat([a.STT, tr('hdk' + a.Loai).vi, a.NoiDung, a.PhuTrach, a.Han, a.NgayXong, a.KetQua], tail)));
+  });
+  downloadCsv(`rca_${stamp()}.csv`, rows);
+}
+
+/* ---- Chi tiết ---- */
+VIEWS.rca = p => {
+  if (p[1] && p[2] === 'sua') return viewRcaForm('edit', p[1]);
+  if (p[1]) return viewRcaDetail(p[1]);
+  return viewRcaList();
+};
+VIEWS['rca-moi'] = p => viewRcaForm('new', p[1] || '');
+
+function viewRcaDetail(so) {
+  if (!S.data) return loadingView();
+  const r = rcaBySo(so);
+  if (!r) return { title: 'rcaDetail', back: 'rca', tab: 'cv', html: `<div class="empty">${ic('search')}${t('rcaNotFound', so)}</div>` };
+  const s = rcaStatus(r);
+  const ql = isQL();
+  const enc = encodeURIComponent(r.SoRCA);
+  const today = dToday();
+  const why = rcaJson(r.Why, []);
+  const m6 = rcaJson(r.SauM, {});
+  const scMain = r.SoPhieu ? scBySo(r.SoPhieu) : null;
+  const rel = String(r.PhieuLienQuan || '').split(',').filter(Boolean).map(x => scBySo(x) || { SoPhieu: x, missing: true });
+  const since = r.NgayPhanTich || String(r.NgayTao).slice(0, 10);
+  const linked = new Set(rcaScList(r).map(x => x.toUpperCase()));
+  const after = scOfTb(r.IDThietBi).filter(x => x.TrangThaiPhieu !== 'HUY' && String(x.TGBao).slice(0, 10) > since && !linked.has(String(x.SoPhieu).toUpperCase()));
+  const canEdit = ql || r.TrangThai === 'MO';
+  const kv = (key, val, raw) => (val === '' || val === null || val === undefined) ? '' :
+    `<div class="kv"><div class="k">${t(key)}</div><div class="v">${raw ? val : esc(val)}</div></div>`;
+  const scLine = x => x.missing ? `<div class="mini"><span class="sc-no">${esc(x.SoPhieu)}</span></div>` : scMini(x, false);
+  return {
+    live: true, title: 'rcaDetail', back: 'rca', tab: 'cv',
+    html: `
+      <section class="card hero rc-${esc(s.st)}">
+        <div class="hero-main">
+          <div class="hero-ids"><span class="sc-no big">${esc(r.SoRCA)}</span>${rcaPill(s.st)}</div>
+          <div class="hero-name">${esc(r.TieuDe)}</div>
+          ${r.LyDo ? `<div class="sc-meta">${String(r.LyDo).split(',').filter(Boolean).map(x => `<span class="tag">${t('rcaLD' + x)}</span>`).join('')}</div>` : ''}
+          ${s.acts.length ? `<div class="kt-prog rc-prog"><div class="prog"><i style="width:${Math.round(s.done * 100 / s.acts.length)}%"></i></div><b>${s.done}/${s.acts.length}</b></div>` : ''}
+        </div>
+      </section>
+      ${r.TrangThai === 'HUY' ? `<div class="notice warn">${ic('ban')}<div>${t('scCancelledNote', r.LyDoHuy || '')}</div></div>` : ''}
+      ${r.TrangThai === 'MO' && r.KetQuaHL === 'KHONGHIEULUC' ? `<div class="notice warn">${ic('undo')}<div>${t('rcaNotEffNote', fmtDate(r.TGKiemTraHL), r.NhanXetHL || '')}</div></div>` : ''}
+      ${s.st === 'PHANTICH' ? `<div class="notice">${ic('info')}<div>${t('rcaNeedRoot')}</div></div>` : ''}
+      ${s.st === 'CHOHL' ? `<div class="notice ${s.hlLate ? 'warn' : ''}">${ic('checkCircle')}<div>${t(ql ? 'rcaReadyQL' : 'rcaReadyKTV')}${r.HanKiemTraHL ? ` · ${esc(tp('rcaHanHL'))}: ${esc(fmtDate(r.HanKiemTraHL))}` : ''}</div></div>` : ''}
+      ${tbCard(r.IDThietBi)}
+      ${canEdit || ql ? `<div class="actions-row">
+        ${canEdit ? `<a class="btn sm" href="#/rca/${enc}/sua">${ic('edit')}${t('edit')}</a>` : ''}
+        ${ql && r.TrangThai === 'MO' ? `<button class="btn sm${s.st === 'CHOHL' ? ' primary' : ''}" data-act="rcaVerify" data-so="${esc(r.SoRCA)}">${ic('checkCircle')}${t('rcaVerify')}</button>` : ''}
+        ${ql && r.TrangThai !== 'MO' ? `<button class="btn sm" data-act="rcaReopen" data-so="${esc(r.SoRCA)}">${ic('undo')}${t('rcaReopen')}</button>` : ''}
+        ${ql && r.TrangThai === 'MO' ? `<button class="btn sm" data-act="rcaCancel" data-so="${esc(r.SoRCA)}">${ic('ban')}${t('rcaCancel')}</button>` : ''}
+      </div>` : ''}
+      <section class="card">
+        <div class="card-h">${ic('alert')}${t('rcaIncident')}</div>
+        <div class="kv col"><div class="v pre">${esc(r.MoTa)}</div></div>
+        ${kv('rcaTeam', r.NhomPhanTich)}
+        ${kv('rcaDate', fmtDate(r.NgayPhanTich))}
+      </section>
+      ${scMain || rel.length ? `<section class="card">
+        <div class="card-h">${ic('wrench')}${t('rcaTickets')}<span class="count">${(scMain ? 1 : 0) + rel.length}</span></div>
+        <div class="mini-list">${scMain ? scMini(scMain, false) : (r.SoPhieu ? scLine({ SoPhieu: r.SoPhieu, missing: true }) : '')}${rel.map(scLine).join('')}</div>
+      </section>` : ''}
+      <section class="card">
+        <div class="card-h">${ic('help')}${t('rca5Why')}</div>
+        ${why.length ? `<ol class="why-chain">${why.map((w, i) => `<li><span class="why-q">${t('rcaWhyN', i + 1)}</span><div class="pre">${w ? esc(w) : '<span class="muted">—</span>'}</div></li>`).join('')}</ol>`
+          : `<div class="empty small">${t('rcaNoWhy')}</div>`}
+      </section>
+      ${Object.keys(m6).length ? `<section class="card">
+        <div class="card-h">${ic('grid')}${t('rca6M')}</div>
+        <div class="m6-grid">${RCA_6M.filter(k => m6[k]).map(k => `<div class="m6${r.NhomNguyenNhan === k ? ' root' : ''}"><div class="m6-k">${t('m6' + k)}</div><div class="pre small">${esc(m6[k])}</div></div>`).join('')}</div>
+      </section>` : ''}
+      <section class="card root-card${r.NguyenNhanGoc ? '' : ' empty-root'}">
+        <div class="card-h">${ic('target')}${t('rcaRoot')}${r.NhomNguyenNhan ? `<span class="sp"></span><span class="tag info">${t('m6' + r.NhomNguyenNhan)}</span>` : ''}</div>
+        <div class="kv col"><div class="v pre">${r.NguyenNhanGoc ? esc(r.NguyenNhanGoc) : `<span class="muted">${t('rcaNoRoot')}</span>`}</div></div>
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('checklist')}${t('rcaActions')}<span class="count">${s.done}/${s.acts.length}</span></div>
+        ${s.acts.length ? s.acts.map(a => hdkRow(r, a, today)).join('') : `<div class="empty small">${t('rcaNoActs2')}</div>`}
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('checkCircle')}${t('rcaEff')}</div>
+        ${kv('rcaHanHL', r.HanKiemTraHL ? fmtDate(r.HanKiemTraHL) : '')}
+        ${r.KetQuaHL ? kv('rcaLastHL', `<span class="tag ${r.KetQuaHL === 'HIEULUC' ? 'ok' : 'bad'}">${t('rcaHL' + r.KetQuaHL)}</span> ${esc(fmtDate(r.TGKiemTraHL))} · ${esc(r.NguoiKiemTraHL || '')}${Number(r.SoLanKTHL) > 1 ? ` <span class="muted small">(${esc(tp('rcaNthCheck', r.SoLanKTHL))})</span>` : ''}`, true) : ''}
+        ${r.NhanXetHL ? `<div class="kv col"><div class="k">${t('rcaHLNote')}</div><div class="v pre">${esc(r.NhanXetHL)}</div></div>` : ''}
+        ${!r.KetQuaHL && !r.HanKiemTraHL ? `<div class="empty small">${t('rcaNoHL')}</div>` : ''}
+      </section>
+      <section class="card">
+        <div class="card-h">${ic('repeat')}${t('rcaAfter')}<span class="count">${after.length}</span></div>
+        ${after.length ? `<div class="mini-list">${after.slice(0, 20).map(x => scMini(x, false)).join('')}</div>`
+          : `<div class="empty ok small">${ic('check')}${t('rcaNoAfter', fmtDate(since))}</div>`}
+      </section>
+      <p class="muted small audit">${t('createdBy', fmtTime(r.NgayTao), r.NguoiTao || '—')}<br>${t('updatedBy', fmtTime(r.NgaySua), r.NguoiSua || '—')}</p>
+      ${ql ? `<button class="btn block danger-outline" data-act="rcaDelete" data-so="${esc(r.SoRCA)}">${ic('trash')}${t('rcaDelete')}</button>` : ''}`
+  };
+}
+function hdkRow(r, a, today) {
+  const late = r.TrangThai === 'MO' && hdkLate(a, today);
+  return `<div class="hdk-row${a.NgayXong ? ' done' : (late ? ' late' : '')}">
+    <div class="tb-top">${hdkTag(a.Loai)}<span class="sp"></span>${a.Han || a.NgayXong ? hdkDueHtml(a, today) : ''}</div>
+    <div class="hdk-text">${esc(a.NoiDung)}</div>
+    ${a.PhuTrach ? `<div class="small muted">${ic('user')} ${esc(a.PhuTrach)}</div>` : ''}
+    ${a.KetQua ? `<div class="kq-note">${esc(a.KetQua)}</div>` : ''}
+    ${r.TrangThai === 'MO' ? `<div class="hdk-act">${a.NgayXong
+      ? `<button class="link small" data-act="hdkUndo" data-so="${esc(r.SoRCA)}" data-stt="${esc(a.STT)}">${t('rcaUndoDone')}</button>`
+      : `<button class="btn sm" data-act="hdkDone" data-so="${esc(r.SoRCA)}" data-stt="${esc(a.STT)}">${ic('check')}${t('rcaMarkDone')}</button>`}</div>` : ''}
+  </div>`;
+}
+
+/* ---- Biểu mẫu RCA ---- */
+/** Mô tả sự cố điền sẵn từ phiếu sửa chữa */
+function rcaMoTaFromSc(sc) {
+  const d = scDownMin(sc);
+  const lines = [`${tr('scMoTa').vi}: ${sc.MoTa}`];
+  if (d) lines.push(`${tr('scDurDown').vi}: ${fmtDur(d.min).vi}`);
+  if (sc.NguyenNhan) lines.push(`${tr('scNguyenNhan').vi}: ${sc.NguyenNhan}`);
+  if (sc.CachXuLy) lines.push(`${tr('scCachXuLy').vi}: ${sc.CachXuLy}`);
+  return lines.join('\n');
+}
+function viewRcaForm(mode, key) {
+  if (!S.data) return loadingView();
+  let cur = null, sc = null, tb = null;
+  if (mode === 'edit') {
+    cur = rcaBySo(key);
+    if (!cur) return { title: 'rcaDetail', back: 'rca', tab: 'cv', html: `<div class="empty">${t('rcaNotFound', key)}</div>` };
+    if (!isQL() && cur.TrangThai !== 'MO') return forbiddenView('rca/' + encodeURIComponent(cur.SoRCA));
+    tb = tbById(cur.IDThietBi);
+    sc = cur.SoPhieu ? scBySo(cur.SoPhieu) : null;
+  } else if (key) {
+    sc = scBySo(key);
+    if (!sc) tb = tbById(key);
+    else tb = tbById(sc.IDThietBi);
+    if (sc) {
+      const ex = rcaOfSc(sc.SoPhieu).find(r => r.TrangThai !== 'HUY');
+      if (ex) return { title: 'rcaNew', back: 'sc/' + encodeURIComponent(sc.SoPhieu), tab: 'cv', html: `<a class="notice src-link" href="#/rca/${encodeURIComponent(ex.SoRCA)}">${ic('target')}<div>${t('rcaExists', ex.SoRCA)}</div>${ic('chev')}</a>` };
+    }
+  }
+  const fkey = mode + ':' + (cur ? cur.SoRCA : key);
+  if (!S.rcaForm || S.rcaForm.key !== fkey) {
+    const sg = sc ? rcaSuggest(sc) : null;
+    const r = cur ? Object.assign({}, cur) : {
+      IDThietBi: tb ? tb.ID : '', SoPhieu: sc ? sc.SoPhieu : '',
+      TieuDe: sc ? String(sc.MoTa || '').split('\n')[0].slice(0, 200) : '', MoTa: sc ? rcaMoTaFromSc(sc) : '',
+      LyDo: sg ? [sg.long ? 'LON' : '', sg.rep ? 'LAPLAI' : ''].filter(Boolean).join(',') : '',
+      NhomPhanTich: S.name, NgayPhanTich: dToday(), NguyenNhanGoc: '', NhomNguyenNhan: '', HanKiemTraHL: ''
+    };
+    const rel = new Set(cur ? String(cur.PhieuLienQuan || '').split(',').filter(Boolean)
+      : (sg && sg.rep ? sg.win.map(x => x.SoPhieu).filter(x => x !== sc.SoPhieu) : []));
+    const why = rcaJson(cur && cur.Why, []);
+    S.rcaForm = {
+      key: fkey, mode, orig: cur ? cur.NgaySua : undefined, r, rel,
+      why: [0, 1, 2, 3, 4].map(i => why[i] || ''),
+      m6: Object.assign({}, rcaJson(cur && cur.SauM, {})),
+      acts: cur ? hdkOf(cur.SoRCA).map(a => Object.assign({}, a)) : []
+    };
+  }
+  const F = S.rcaForm, R = F.r;
+  const tbSel = tbById(R.IDThietBi);
+  const back = cur ? 'rca/' + encodeURIComponent(cur.SoRCA) : (sc ? 'sc/' + encodeURIComponent(sc.SoPhieu) : (tb ? 'tb/' + encodeURIComponent(tb.ID) : 'rca'));
+  const others = R.IDThietBi ? scOfTb(R.IDThietBi).filter(x => x.SoPhieu !== R.SoPhieu && x.TrangThaiPhieu !== 'HUY').slice(0, 25) : [];
+  const lyDo = String(R.LyDo || '').split(',').filter(Boolean);
+  const names = uniqueRecent('NguoiThucHien', [S.name].concat(allHDK().map(a => a.PhuTrach)));
+  const txt = (f, key, req, attrs, ph) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)}${req ? ' <b class="req">*</b>' : ''}</span>
+    <input data-rf="${f}" value="${esc(R[f] || '')}" ${attrs || ''} ${ph ? `placeholder="${esc(tp(ph))}"` : ''}><span class="fe"></span></label>`;
+  const area = (f, key, req, rows, ph) => `<label class="fld" data-fld="${f}"><span class="lb">${t(key)}${req ? ' <b class="req">*</b>' : ''}</span>
+    <textarea data-rf="${f}" rows="${rows}" maxlength="2000" ${ph ? `placeholder="${esc(tp(ph))}"` : ''}>${esc(R[f] || '')}</textarea><span class="fe"></span></label>`;
+  return {
+    title: cur ? 'rcaEditTitle' : 'rcaNew', back, tab: 'cv', noPtr: true,
+    html: `
+      <form id="f-rca" class="form" autocomplete="off" novalidate>
+        ${cur ? `<div class="card pad slim"><span class="sc-no big">${esc(cur.SoRCA)}</span></div>` : ''}
+        <section class="card pad">
+          <div class="card-h flat">${ic('alert')}${t('rcaIncident')}</div>
+          ${mode === 'new' && !sc && !tb ? `<div class="fld" data-fld="IDThietBi"><span class="lb">${t('scMay')} <b class="req">*</b></span>
+              <button type="button" class="select" data-act="rcaPickTb">${scTbLabel(R.IDThietBi)}${ic('down')}</button><span class="fe"></span></div>`
+            : `<div class="static">${tbSel ? `<span class="tb-id">${esc(tbSel.ID)}</span> ${bi(tbSel.TenMay, tbSel.TenMayZH)}` : esc(R.IDThietBi)}</div>`}
+          ${R.SoPhieu ? `<div class="small muted">${t('rcaFromSc', R.SoPhieu)}</div>` : ''}
+          ${txt('TieuDe', 'rcaTitle', true, 'maxlength="200"', 'rcaTitlePh')}
+          ${area('MoTa', 'rcaMoTa', true, 4, 'rcaMoTaPh')}
+          <div class="fld"><span class="lb">${t('rcaWhyDo')}</span>
+            <div class="chk-chips">${RCA_LYDO.map(x => `<label class="chk"><input type="checkbox" data-ld="${x}" ${lyDo.includes(x) ? 'checked' : ''}><span>${t('rcaLD' + x)}</span></label>`).join('')}</div></div>
+          ${others.length ? `<div class="fld" data-fld="PhieuLienQuan"><span class="lb">${t('rcaRelated')}</span>
+            <div class="rel-list">${others.map(x => `<label class="tem-row"><input type="checkbox" data-rel="${esc(x.SoPhieu)}" ${F.rel.has(x.SoPhieu) ? 'checked' : ''}>
+              <span class="sc-no">${esc(x.SoPhieu)}</span><span class="grow small">${esc(fmtDate(x.TGBao))} · ${esc(String(x.MoTa || '').slice(0, 80))}</span></label>`).join('')}</div>
+            <span class="fe"></span></div>` : ''}
+          <div class="grid2">
+            ${txt('NhomPhanTich', 'rcaTeam', false, 'maxlength="300"', 'rcaTeamPh')}
+            <label class="fld" data-fld="NgayPhanTich"><span class="lb">${t('rcaDate')}</span><input type="date" data-rf="NgayPhanTich" value="${esc(R.NgayPhanTich || '')}"><span class="fe"></span></label>
+          </div>
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('help')}${t('rca5Why')}</div>
+          <p class="muted small">${t('rcaWhyHint')}</p>
+          ${F.why.map((w, i) => `<label class="fld why-f"><span class="lb"><span class="why-n">${i + 1}</span>${t('rcaWhyN', i + 1)}</span>
+            <textarea data-why="${i}" rows="2" maxlength="1000" placeholder="${esc(i === 0 ? tp('rcaWhy1Ph') : '')}">${esc(w)}</textarea></label>`).join('')}
+        </section>
+        <details class="card pad m6-f"${Object.keys(F.m6).length ? ' open' : ''}>
+          <summary class="card-h flat">${ic('grid')}${t('rca6M')}<span class="sp"></span><span class="muted small">${t('optional')}</span></summary>
+          <p class="muted small">${t('rca6MHint')}</p>
+          ${RCA_6M.map(k => `<label class="fld"><span class="lb">${t('m6' + k)}</span><textarea data-m6="${k}" rows="1" maxlength="1000">${esc(F.m6[k] || '')}</textarea></label>`).join('')}
+        </details>
+        <section class="card pad root-f">
+          <div class="card-h flat">${ic('target')}${t('rcaRoot')}</div>
+          ${area('NguyenNhanGoc', 'rcaRootLbl', false, 3, 'rcaRootPh')}
+          <div class="fld" data-fld="NhomNguyenNhan"><span class="lb">${t('rcaRootCat')}</span>
+            <button type="button" class="select" data-act="rcaPickCat">${R.NhomNguyenNhan ? t('m6' + R.NhomNguyenNhan) : `<span class="muted">${t('choose')}</span>`}${ic('down')}</button><span class="fe"></span></div>
+        </section>
+        <section class="card pad">
+          <div class="card-h flat" data-fld="hanhDong">${ic('checklist')}${t('rcaActions')}</div>
+          <div id="rca-acts">${rcaActsForm()}</div>
+          <button type="button" class="btn block" data-act="hdkAdd">${ic('plus')}${t('rcaActAdd')}</button>
+        </section>
+        <section class="card pad">
+          <div class="card-h flat">${ic('checkCircle')}${t('rcaEff')}</div>
+          <label class="fld" data-fld="HanKiemTraHL"><span class="lb">${t('rcaHanHL')}</span><input type="date" data-rf="HanKiemTraHL" value="${esc(R.HanKiemTraHL || '')}"><span class="fe"></span></label>
+          <p class="muted small">${t('rcaHanHLHint')}</p>
+        </section>
+        ${datalist('dl-pt', names)}
+        <div class="form-actions">
+          <a class="btn" href="#/${back}">${t('cancel')}</a>
+          <button class="btn primary" type="submit">${ic('check')}${t(cur ? 'save' : 'rcaCreate')}</button>
+        </div>
+      </form>`,
+    after: () => {
+      const form = $('#f-rca');
+      form.addEventListener('submit', saveRcaForm);
+      form.addEventListener('input', e => { clearFieldErr(e); rcaFormInput(e.target); });
+      form.addEventListener('change', e => rcaFormInput(e.target));
+    }
+  };
+}
+function rcaActsForm() {
+  const F = S.rcaForm;
+  if (!F.acts.length) return `<div class="empty small">${t('rcaActEmpty')}</div>`;
+  return F.acts.map((a, i) => `<div class="card pad mau-item hdk-f" data-fld="hanhDong:${i + 1}">
+    <div class="mau-head"><span class="mau-no">${i + 1}</span><span class="sp"></span>
+      <button type="button" class="hbtn sm danger" data-act="hdkDel" data-i="${i}" aria-label="${esc(tp('delete'))}">${ic('trash')}</button></div>
+    <div class="seg hdk-seg">${HDK_LOAI.map(l => `<label><input type="radio" name="hk${i}" value="${l}" data-ak="Loai" data-i="${i}" ${(a.Loai || 'KHACPHUC') === l ? 'checked' : ''}><span>${t('hdk' + l)}</span></label>`).join('')}</div>
+    <label class="fld"><span class="lb">${t('rcaActText')} <b class="req">*</b></span><textarea data-ak="NoiDung" data-i="${i}" rows="2" maxlength="1000">${esc(a.NoiDung || '')}</textarea></label>
+    <div class="grid2">
+      <label class="fld"><span class="lb">${t('rcaActWho')}</span><input data-ak="PhuTrach" data-i="${i}" value="${esc(a.PhuTrach || '')}" maxlength="150" list="dl-pt"></label>
+      <label class="fld"><span class="lb">${t('rcaActDue')}</span><input type="date" data-ak="Han" data-i="${i}" value="${esc(a.Han || '')}"></label>
+    </div>
+    <div class="grid2">
+      <label class="fld"><span class="lb">${t('rcaActDoneOn')}</span><input type="date" data-ak="NgayXong" data-i="${i}" value="${esc(a.NgayXong || '')}" max="${dToday()}"></label>
+      <label class="fld"><span class="lb">${t('rcaActResult')}</span><input data-ak="KetQua" data-i="${i}" value="${esc(a.KetQua || '')}" maxlength="1000"></label>
+    </div>
+    <span class="fe"></span>
+  </div>`).join('');
+}
+function rcaFormInput(el) {
+  const F = S.rcaForm;
+  if (!F) return;
+  if (el.dataset.rf) F.r[el.dataset.rf] = el.value;
+  else if (el.dataset.why !== undefined) F.why[Number(el.dataset.why)] = el.value;
+  else if (el.dataset.m6) { if (el.value.trim()) F.m6[el.dataset.m6] = el.value; else delete F.m6[el.dataset.m6]; }
+  else if (el.dataset.ld) {
+    const set = new Set(String(F.r.LyDo || '').split(',').filter(Boolean));
+    if (el.checked) set.add(el.dataset.ld); else set.delete(el.dataset.ld);
+    F.r.LyDo = RCA_LYDO.filter(x => set.has(x)).join(',');
+  } else if (el.dataset.rel) { if (el.checked) F.rel.add(el.dataset.rel); else F.rel.delete(el.dataset.rel); }
+  else if (el.dataset.ak) {
+    const a = F.acts[Number(el.dataset.i)];
+    if (!a) return;
+    if (el.type === 'radio') { if (el.checked) a.Loai = el.value; } else a[el.dataset.ak] = el.value;
+  }
+}
+const RCA_FIELD_KEYS = { TieuDe: 'rcaTitle', MoTa: 'rcaMoTa', IDThietBi: 'scMay', SoPhieu: 'scDetail', PhieuLienQuan: 'rcaRelated', hanhDong: 'rcaActions',
+  NgayPhanTich: 'rcaDate', HanKiemTraHL: 'rcaHanHL', NhomNguyenNhan: 'rcaRootCat', KetQuaHL: 'rcaHLResult', NhanXetHL: 'rcaHLNote', NgayXong: 'rcaActDoneOn',
+  TGKiemTraHL: 'rcaHLDate', LyDoHuy: 'scLyDoHuy' };
+function rcaFieldName(f, x) { const b = RCA_FIELD_KEYS[f] ? tr(RCA_FIELD_KEYS[f]) : { vi: f, zh: f }; return x && (x.line || x.value) ? { vi: `${b.vi} ${x.line || x.value}`, zh: `${b.zh} ${x.line || x.value}` } : b; }
+
+async function saveRcaForm(ev) {
+  ev.preventDefault();
+  if (!needOnline()) return;
+  const form = ev.target;
+  const F = S.rcaForm;
+  if (!F) return;
+  const R = F.r;
+  $$('.has-err', form).forEach(el => { el.classList.remove('has-err'); const fe = $('.fe', el); if (fe) fe.innerHTML = ''; });
+  let bad = false;
+  const err = (f, k) => { scFieldErr(form, f, k); bad = true; };
+  if (!R.IDThietBi) err('IDThietBi', 'eRequired');
+  if (!String(R.TieuDe || '').trim()) err('TieuDe', 'eRequired');
+  if (!String(R.MoTa || '').trim()) err('MoTa', 'eRequired');
+  const today = dToday();
+  F.acts.forEach((a, i) => {
+    if (!String(a.NoiDung || '').trim()) err('hanhDong:' + (i + 1), 'rcaActTextReq');
+    else if (a.NgayXong && a.NgayXong > today) err('hanhDong:' + (i + 1), 'eFuture');
+  });
+  if (bad) { toast('eInvalid', 'err'); const first = $('.has-err', form); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+  const rca = {};
+  ['TieuDe', 'MoTa', 'LyDo', 'NhomPhanTich', 'NgayPhanTich', 'NguyenNhanGoc', 'NhomNguyenNhan', 'HanKiemTraHL'].forEach(f => { rca[f] = String(R[f] === undefined || R[f] === null ? '' : R[f]).trim(); });
+  rca.Why = F.why.map(w => String(w || '').trim());
+  rca.SauM = {};
+  RCA_6M.forEach(k => { if (String(F.m6[k] || '').trim()) rca.SauM[k] = String(F.m6[k]).trim(); });
+  rca.PhieuLienQuan = [...F.rel];
+  const hanhDong = F.acts.map(a => ({ Loai: a.Loai || 'KHACPHUC', NoiDung: String(a.NoiDung || '').trim(), PhuTrach: String(a.PhuTrach || '').trim(),
+    Han: a.Han || '', NgayXong: a.NgayXong || '', KetQua: String(a.KetQua || '').trim() }));
+  const payload = { rca, hanhDong };
+  if (F.mode === 'new') { payload.op = 'create'; rca.SoPhieu = R.SoPhieu || ''; rca.IDThietBi = R.IDThietBi; }
+  else { payload.op = 'capnhat'; payload.so = R.SoRCA; payload.ngaySuaCu = F.orig || ''; }
+  busy(form, true);
+  try {
+    const r = await api('rcaAction', payload);
+    mergeRCA(r.rca, r.hanhDong);
+    S.rcaForm = null;
+    toast(r.unchanged ? tr('scNoChange') : tr(F.mode === 'new' ? 'rcaCreated' : 'saved', [r.rca.SoRCA]), 'ok');
+    const detail = '#/rca/' + encodeURIComponent(r.rca.SoRCA);
+    if (F.mode === 'edit' && S.prevHash === detail) history.back(); else location.replace(detail);
+  } catch (e) {
+    if (e.code === 'INVALID' && e.extra && e.extra.errors) showErrs(form, e.extra.errors, rcaFieldName);
+    else if (e.code === 'DUPLICATE') { toast(tr('rcaExists', [(e.extra || {}).so || '']), 'err'); }
+    else await rcaHandleErr(e);
+  } finally { if (form.isConnected) busy(form, false); }
+}
+async function rcaHandleErr(e) {
+  if (e.code === 'CONFLICT' || e.code === 'BAD_STATE') {
+    const ex = e.extra || {};
+    closeSheet();
+    if (await confirmDlg('eConflict', e.code === 'CONFLICT' ? tr('scConflictMsg', [ex.nguoiSua || '?', fmtTime(ex.ngaySua)]) : tr('eBadState'), { ok: 'reload' })) {
+      S.rcaForm = null;
+      await refresh(true);
+      const p = route();
+      if (p[0] === 'rca' && p[1] && p[2]) location.replace('#/rca/' + encodeURIComponent(p[1])); else render();
+    }
+  } else if (e.code !== 'AUTH') toast(errText(e), 'err');
+}
+/** Đánh dấu hành động xong (ngày + kết quả) / bỏ đánh dấu */
+function hdkDoneSheet(so, stt, undo) {
+  const r = rcaBySo(so);
+  const a = r && hdkOf(so).find(x => String(x.STT) === String(stt));
+  if (!a || !needOnline()) return;
+  const run = async (NgayXong, KetQua, form) => {
+    if (form) busy(form, true);
+    try {
+      const res = await api('rcaAction', { op: 'hanhdong', so, stt: a.STT, ngaySuaCu: r.NgaySua || '', NgayXong, KetQua });
+      mergeRCA(res.rca, res.hanhDong);
+      closeSheet();
+      toast(NgayXong ? 'rcaActDoneToast' : 'saved', 'ok');
+      render(true);
+    } catch (e) {
+      if (e.code === 'INVALID' && e.extra && e.extra.errors && form) e.extra.errors.forEach(x => scFieldErr(form, x.field, reasonKey(x.reason)));
+      else await rcaHandleErr(e);
+    } finally { if (form && form.isConnected) busy(form, false); }
+  };
+  if (undo) { confirmDlg('rcaUndoDone', { vi: a.NoiDung, zh: '' }).then(ok => { if (ok) run('', a.KetQua, null); }); return; }
+  const sh = openSheet(`
+    <form id="f-hdk" class="form" autocomplete="off" novalidate>
+      <div class="pk-head"><h3 class="h3">${t('rcaMarkDone')}</h3><button type="button" class="hbtn" data-act="closeSheet">${ic('x')}</button></div>
+      <div class="appr">${hdkTag(a.Loai)}<div class="pre small">${esc(a.NoiDung)}</div></div>
+      <label class="fld" data-fld="NgayXong"><span class="lb">${t('rcaActDoneOn')} <b class="req">*</b></span><input type="date" name="d" value="${dToday()}" max="${dToday()}"><span class="fe"></span></label>
+      <label class="fld"><span class="lb">${t('rcaActResult')}</span><textarea name="kq" rows="3" maxlength="1000" placeholder="${esc(tp('rcaActResultPh'))}">${esc(a.KetQua || '')}</textarea></label>
+      <button class="btn primary block" type="submit">${ic('check')}${t('rcaMarkDone')}</button>
+    </form>`);
+  const form = $('#f-hdk', sh);
+  form.addEventListener('submit', ev => {
+    ev.preventDefault();
+    if (!form.d.value) { scFieldErr(form, 'NgayXong', 'eRequired'); return; }
+    run(form.d.value, form.kq.value.trim(), form);
+  });
+}
+/** Quản lý kiểm tra hiệu lực: hiệu lực → đóng RCA; chưa hiệu lực → giữ mở (bắt buộc nhận xét) */
+function rcaVerifySheet(so) {
+  const r = rcaBySo(so);
+  if (!r || !needOnline()) return;
+  const s = rcaStatus(r);
+  const sh = openSheet(`
+    <form id="f-hl" class="form" autocomplete="off" novalidate>
+      <div class="pk-head"><h3 class="h3">${t('rcaVerify')}</h3><button type="button" class="hbtn" data-act="closeSheet">${ic('x')}</button></div>
+      <div class="muted small"><span class="sc-no">${esc(r.SoRCA)}</span> · ${esc(r.IDThietBi)} · ${esc(r.TieuDe)}</div>
+      <div class="appr small">${t('rcaActProg', s.done, s.acts.length)}${r.NguyenNhanGoc ? '' : ` · <span class="bad-n">${t('rcaNoRoot')}</span>`}</div>
+      <div class="fld" data-fld="KetQuaHL"><span class="lb">${t('rcaHLResult')} <b class="req">*</b></span>
+        <div class="seg ck-seg">
+          <label class="yes"><input type="radio" name="kq" value="HIEULUC" ${s.st === 'CHOHL' ? 'checked' : ''}><span>${ic('check')}${t('rcaHLHIEULUC')}</span></label>
+          <label class="no"><input type="radio" name="kq" value="KHONGHIEULUC"><span>${ic('x')}${t('rcaHLKHONGHIEULUC')}</span></label>
+        </div><span class="fe"></span></div>
+      <label class="fld" data-fld="TGKiemTraHL"><span class="lb">${t('rcaHLDate')}</span><input type="date" name="d" value="${dToday()}" max="${dToday()}"><span class="fe"></span></label>
+      <label class="fld" data-fld="NhanXetHL"><span class="lb">${t('rcaHLNote')}</span><textarea name="nx" rows="3" maxlength="1000" placeholder="${esc(tp('rcaHLNotePh'))}"></textarea><span class="fe"></span></label>
+      <p class="muted small">${t('rcaHLHint')}</p>
+      <div class="msg" id="hl-msg"></div>
+      <button class="btn primary block" type="submit">${ic('checkCircle')}${t('save')}</button>
+    </form>`);
+  const form = $('#f-hl', sh);
+  form.addEventListener('input', clearFieldErr);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    $('#hl-msg').innerHTML = '';
+    const kq = form.kq.value;
+    if (!kq) { scFieldErr(form, 'KetQuaHL', 'eRequired'); return; }
+    if (kq === 'KHONGHIEULUC' && !form.nx.value.trim()) { scFieldErr(form, 'NhanXetHL', 'eRequired'); return; }
+    busy(form, true);
+    try {
+      const res = await api('rcaAction', { op: 'kiemtra', so, ngaySuaCu: r.NgaySua || '', rca: { KetQuaHL: kq, TGKiemTraHL: form.d.value, NhanXetHL: form.nx.value.trim() } });
+      mergeRCA(res.rca, res.hanhDong);
+      closeSheet();
+      toast(kq === 'HIEULUC' ? 'rcaClosedToast' : 'saved', 'ok');
+      render(true);
+    } catch (e) {
+      if (e.code === 'NOT_READY') $('#hl-msg').innerHTML = ((e.extra && e.extra.missing) || []).map(m => t('rcaMiss_' + m)).join('');
+      else if (e.code === 'INVALID' && e.extra && e.extra.errors) e.extra.errors.forEach(x => scFieldErr(form, x.field, reasonKey(x.reason)));
+      else if (e.code === 'CONFLICT' || e.code === 'BAD_STATE') await rcaHandleErr(e);
+      else if (e.code !== 'AUTH') $('#hl-msg').innerHTML = errHtml(e);
+    } finally { if (form.isConnected) busy(form, false); }
+  });
+}
+function rcaCancelSheet(so) {
+  const r = rcaBySo(so);
+  if (!r || !needOnline()) return;
+  const sh = openSheet(`
+    <form id="f-rch" class="form" autocomplete="off" novalidate>
+      <div class="pk-head"><h3 class="h3">${t('rcaCancel')}</h3><button type="button" class="hbtn" data-act="closeSheet">${ic('x')}</button></div>
+      <div class="muted small"><span class="sc-no">${esc(r.SoRCA)}</span> · ${esc(r.TieuDe)}</div>
+      <label class="fld" data-fld="LyDoHuy"><span class="lb">${t('scLyDoHuy')} <b class="req">*</b></span><textarea name="ly" rows="3" maxlength="1000"></textarea><span class="fe"></span></label>
+      <div class="msg" id="rch-msg"></div>
+      <button class="btn danger block" type="submit">${ic('ban')}${t('rcaCancel')}</button>
+    </form>`);
+  const form = $('#f-rch', sh);
+  form.addEventListener('input', clearFieldErr);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    if (!form.ly.value.trim()) { scFieldErr(form, 'LyDoHuy', 'eRequired'); return; }
+    busy(form, true);
+    try {
+      const res = await api('rcaAction', { op: 'huy', so, ngaySuaCu: r.NgaySua || '', rca: { LyDoHuy: form.ly.value.trim() } });
+      mergeRCA(res.rca, res.hanhDong);
+      closeSheet(); toast('scOpDone_huy', 'ok'); render(true);
+    } catch (e) {
+      if (e.code === 'CONFLICT' || e.code === 'BAD_STATE') await rcaHandleErr(e);
+      else if (e.code !== 'AUTH') $('#rch-msg').innerHTML = errHtml(e);
+    } finally { if (form.isConnected) busy(form, false); }
+  });
+}
+async function rcaSimpleOp(op, so) {
+  const r = rcaBySo(so);
+  if (!r || !needOnline()) return;
+  if (op === 'xoa' && !(await confirmDlg(tr('rcaDeleteQ', [so]), 'rcaDeleteMsg', { ok: 'delete', danger: true }))) return;
+  if (op === 'molai' && !(await confirmDlg('rcaReopen', 'rcaReopenMsg', { ok: 'rcaReopen' }))) return;
+  try {
+    const res = await api('rcaAction', { op, so, ngaySuaCu: r.NgaySua || '' });
+    if (op === 'xoa') { removeRCA(so); toast(tr('scDeleted', [so]), 'ok'); location.replace('#/rca'); return; }
+    mergeRCA(res.rca, res.hanhDong);
+    toast('saved', 'ok'); render(true);
+  } catch (e) { await rcaHandleErr(e); }
+}
+
+/* ---- Phiếu sửa chữa: liên kết RCA + gợi ý ---- */
+function scRcaBlock(sc) {
+  const list = rcaOfSc(sc.SoPhieu);
+  if (list.length) {
+    return list.map(r => `<a class="notice sc-open rc-${esc(rcaStatus(r).st)}" href="#/rca/${encodeURIComponent(r.SoRCA)}">${ic('target')}
+      <div>${t('rcaOnSc', r.SoRCA)}<div class="sc-desc one">${esc(r.TieuDe)}</div></div>${rcaPill(rcaStatus(r).st)}</a>`).join('');
+  }
+  const sg = rcaSuggest(sc);
+  if (!sg) return '';
+  return `<div class="notice warn rca-sug">${ic('target')}<div>${t('rcaSugNote')}<div class="sc-meta">${rcaSugTags(sg)}</div>
+    <a class="btn sm primary" href="#/rca-moi/${encodeURIComponent(sc.SoPhieu)}">${ic('target')}${t('rcaDo')}</a></div></div>`;
+}
+
+/* ---- Cài đặt: nhắc việc qua email · ngưỡng nhắc & gợi ý (quản lý) ---- */
+function nguongSheet() {
+  if (!isQL() || !needOnline()) return;
+  const v = k => cfgInt(k, { HD_NhacTruoc: 60, RCA_LapLai: 3, RCA_SoNgay: 90, RCA_GioDung: 8 }[k]);
+  const num = (k, key, unit) => `<label class="fld" data-fld="${k}"><span class="lb">${t(key)}</span>
+    <div class="ck-num"><input name="${k}" value="${v(k)}" inputmode="numeric" maxlength="4"><span class="ck-unit">${t(unit)}</span></div><span class="fe"></span></label>`;
+  const sh = openSheet(`
+    <form id="f-ng" class="form" autocomplete="off" novalidate>
+      <div class="pk-head"><h3 class="h3">${t('nguongSettings')}</h3><button type="button" class="hbtn" data-act="closeSheet">${ic('x')}</button></div>
+      <div class="card-h flat">${ic('file')}${t('contracts')}</div>
+      ${num('HD_NhacTruoc', 'hdNhacDefault', 'daysUnit')}
+      <div class="card-h flat">${ic('target')}${t('rcaSugSettings')}</div>
+      <div class="grid2">${num('RCA_LapLai', 'rcaSetLap', 'timesUnit')}${num('RCA_SoNgay', 'rcaSetNgay', 'daysUnit')}</div>
+      ${num('RCA_GioDung', 'rcaSetGio', 'hoursUnit')}
+      <p class="muted small">${t('rcaSetHint')}</p>
+      <div class="msg" id="ng-msg"></div>
+      <button class="btn primary block" type="submit">${ic('check')}${t('save')}</button>
+    </form>`);
+  const form = $('#f-ng', sh);
+  form.addEventListener('input', clearFieldErr);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const data = {};
+    ['HD_NhacTruoc', 'RCA_LapLai', 'RCA_SoNgay', 'RCA_GioDung'].forEach(k => { data[k] = form[k].value.trim(); });
+    busy(form, true);
+    try {
+      const r = await api('saveCauHinh', data);
+      S.data.cauHinh = Object.assign({}, S.data.cauHinh, r.cauHinh);
+      saveCache(); closeSheet(); toast('saved', 'ok'); render(true);
+    } catch (e) {
+      if (e.code === 'INVALID' && e.extra && e.extra.errors) e.extra.errors.forEach(x => scFieldErr(form, x.field, 'eRange', [x.min, x.max]));
+      else $('#ng-msg').innerHTML = errHtml(e);
+    } finally { if (form.isConnected) busy(form, false); }
+  });
+}
+async function nhacSheet() {
+  if (!isQL() || !needOnline()) return;
+  const sh = openSheet(`<div class="pk-head"><h3 class="h3">${t('nhacSettings')}</h3><button type="button" class="hbtn" data-act="closeSheet">${ic('x')}</button></div>
+    <div id="nh-body"><div class="center pad"><div class="spinner"></div></div></div>`);
+  let st;
+  try { st = await api('nhacEmail', { op: 'status' }); } catch (e) {
+    if ($('#nh-body', sh)) $('#nh-body', sh).innerHTML = `<div class="msg">${errHtml(e)}</div><p class="muted small">${t('nhacAuthHint')}</p>`;
+    return;
+  }
+  const body = $('#nh-body', sh);
+  if (!body) return;
+  body.innerHTML = `<form id="f-nh" class="form" autocomplete="off" novalidate>
+      <label class="switch"><input type="checkbox" name="bat" ${st.on ? 'checked' : ''}><span class="sw"></span>${t('nhacOn')}</label>
+      <label class="fld" data-fld="emails"><span class="lb">${t('nhacEmails')}</span>
+        <input name="emails" type="text" inputmode="email" value="${esc(st.emails)}" placeholder="${esc(st.owner || 'email@…')}" maxlength="600"><span class="fe"></span>
+        <span class="muted small">${t('nhacEmailsHint', st.owner || '—')}</span></label>
+      <div class="notice">${ic('info')}<div>${t('nhacWhat')}</div></div>
+      ${st.quota !== null && st.quota !== undefined ? `<p class="muted small">${t('nhacQuota', st.quota)}</p>` : ''}
+      <div class="msg" id="nh-msg"></div>
+      <div class="row gap"><button type="button" class="btn block" data-act="nhacTest">${ic('mail')}${t('nhacTest')}</button>
+        <button class="btn primary block" type="submit">${ic('check')}${t('save')}</button></div>
+    </form>`;
+  const form = $('#f-nh', body);
+  form.addEventListener('input', clearFieldErr);
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    busy(form, true);
+    try {
+      const r = await api('nhacEmail', { op: 'save', emails: form.emails.value.trim(), bat: form.bat.checked });
+      closeSheet();
+      toast(r.on ? tr('nhacSavedOn', [r.emails || r.owner]) : tr('nhacSavedOff'), 'ok');
+    } catch (e) {
+      if (e.code === 'INVALID') scFieldErr(form, 'emails', 'eEmail');
+      else $('#nh-msg').innerHTML = errHtml(e) + `<div class="small">${t('nhacAuthHint')}</div>`;
+    } finally { if (form.isConnected) busy(form, false); }
+  });
+}
+async function nhacTest(btn) {
+  if (!needOnline()) return;
+  btn.disabled = true; btn.classList.add('loading');
+  try {
+    const f = $('#f-nh');
+    const r = await api('nhacEmail', { op: 'test', emails: f ? f.emails.value.trim() : '' });
+    toast(tr('nhacTestSent', [r.sent && r.sent.to ? r.sent.to : '']), 'ok');
+  } catch (e) {
+    const m = $('#nh-msg');
+    if (m) m.innerHTML = errHtml(e) + `<div class="small">${t('nhacAuthHint')}</div>`;
+  } finally { if (btn.isConnected) { btn.disabled = false; btn.classList.remove('loading'); } }
+}
+
 /* -------------------------------- Thêm -------------------------------- */
 
 VIEWS.them = () => {
-  const mods = [['contracts', 'file'], ['predictive', 'pulse'], ['rca', 'help'], ['reports', 'chart'],
-    ['energy', 'flash'], ['circuits', 'plug'], ['monitoring', 'monitor']];
+  const live = [['contracts', 'file', '#/hd', 'contractsDesc'], ['predictive', 'pulse', '#/dd', 'ddDesc'], ['rca', 'target', '#/rca', 'rcaDesc']];
+  const mods = [['reports', 'chart'], ['energy', 'flash'], ['circuits', 'plug'], ['monitoring', 'monitor']];
+  const nHd = S.data ? hdDue().length : 0;
   const set = [
     { href: '#/dm', icon: 'tag', key: 'catalogs' },
     { href: '#/mau', icon: 'checklist', key: 'checkTemplates' },
     { href: '#/tem', icon: 'print', key: 'printLabels', act: 'temBlank' },
     isQL() && { icon: 'clock', key: 'caSettings', act: 'caSettings' },
     isQL() && { href: '#/gc-cai', icon: 'gauge', key: 'gcSetup' },
+    isQL() && { icon: 'mail', key: 'nhacSettings', act: 'nhacSettings' },
+    isQL() && { icon: 'gear', key: 'nguongSettings', act: 'nguongSettings' },
     isQL() && { href: '#/nhap', icon: 'upload', key: 'importExcel' },
     isQL() && { href: '#/pin', icon: 'key', key: 'changePin' },
     isQL() && { href: '#/nk', icon: 'log', key: 'auditLog' }
@@ -4924,6 +7035,8 @@ VIEWS.them = () => {
       </section>
       <h4 class="sec-h">${t('modules')}</h4>
       <div class="menu">
+        ${live.map(m => `<a class="menu-item" href="${m[2]}">${ic(m[1], 'mi')}<div class="mi-text">${t(m[0])}<span class="mi-desc">${t(m[3])}</span></div>
+          ${m[0] === 'contracts' && nHd ? `<span class="badge hd-SAPHET">${nHd}</span>` : ''}${ic('chev', 'mi-chev')}</a>`).join('')}
         ${mods.map(m => `<div class="menu-item soon-item">${ic(m[1], 'mi')}<div class="mi-text">${t(m[0])}</div><span class="soon-tag">${t('comingSoon')}</span></div>`).join('')}
       </div>
       <h4 class="sec-h">${t('settings')}</h4>
@@ -5210,7 +7323,15 @@ const ACTION_KEYS = {
   THEM: 'aAdd', SUA: 'aEdit', DANG_NHAP: 'aLogin', THIET_LAP_PIN: 'aSetup', DOI_PIN_KTV: 'aPinKtv',
   DOI_PIN_QL: 'aPinQl', SUA_MAU: 'aTpl', RESET_PIN_QL: 'aReset',
   NHAN: 'aNhan', CHO: 'aCho', TIEPTUC: 'aTiepTuc', HOANTHANH: 'aHoanThanh', DUYET: 'aDuyet',
-  TRALAI: 'aTraLai', HUY: 'aHuy', XOA: 'aXoa', DOI_HAN: 'aDoiHan'
+  TRALAI: 'aTraLai', HUY: 'aHuy', XOA: 'aXoa', DOI_HAN: 'aDoiHan',
+  KY_TIEP: 'aKyTiep', KET_THUC: 'aKetThuc', KHOI_PHUC: 'aKhoiPhuc', XONG_HD: 'aXongHd', KIEM_TRA_HL: 'aKiemTraHl',
+  MO_LAI: 'aMoLai', EMAIL_NHAC: 'aEmailNhac', CAI_NHAC: 'aCaiNhac'
+};
+/** Liên kết mã bản ghi trong nhật ký tới màn hình tương ứng */
+const NK_LINK = {
+  ThietBi: m => '#/tb/' + m, PhieuSuaChua: m => '#/sc/' + m, PhieuBaoTri: m => '#/bt/' + m, KeHoachBaoTri: m => '#/kh/' + m,
+  KiemTraDauCa: m => '#/kt/' + m, HopDong: m => '#/hd/' + m, BaoTriDuDoan: m => '#/dd/' + m, RCA: m => '#/rca/' + m,
+  HanhDongKhacPhuc: m => '#/rca/' + m.split('/')[0], GioChay: m => (/^TB\d+\//i.test(m) ? '#/tb/' + m.split('/')[0] : '')
 };
 
 VIEWS.nk = () => {
@@ -5250,13 +7371,10 @@ function drawNk() {
   box.innerHTML = rows.map(r => {
     const k = ACTION_KEYS[r.HanhDong];
     const act = k ? t(k) : esc(r.HanhDong);
-    const link = r.Sheet === 'ThietBi' && r.MaBanGhi ? `<a class="tb-id" href="#/tb/${encodeURIComponent(r.MaBanGhi)}">${esc(r.MaBanGhi)}</a>`
-      : (r.Sheet === 'PhieuSuaChua' && r.MaBanGhi && r.HanhDong !== 'XOA' ? `<a class="tb-id" href="#/sc/${encodeURIComponent(r.MaBanGhi)}">${esc(r.MaBanGhi)}</a>`
-        : (r.Sheet === 'PhieuBaoTri' && r.MaBanGhi && r.HanhDong !== 'XOA' ? `<a class="tb-id" href="#/bt/${encodeURIComponent(r.MaBanGhi)}">${esc(r.MaBanGhi)}</a>`
-          : (r.Sheet === 'KeHoachBaoTri' && r.MaBanGhi ? `<a class="tb-id" href="#/kh/${encodeURIComponent(r.MaBanGhi)}">${esc(r.MaBanGhi)}</a>`
-            : (r.Sheet === 'KiemTraDauCa' && r.MaBanGhi && r.HanhDong !== 'XOA' ? `<a class="tb-id" href="#/kt/${encodeURIComponent(r.MaBanGhi)}">${esc(r.MaBanGhi)}</a>`
-              : (r.Sheet === 'GioChay' && /^TB\d+\//i.test(r.MaBanGhi) ? `<a class="tb-id" href="#/tb/${encodeURIComponent(r.MaBanGhi.split('/')[0])}">${esc(r.MaBanGhi)}</a>`
-                : (r.MaBanGhi ? `<span class="tb-id">${esc(r.MaBanGhi)}</span>` : ''))))));
+    // Bản ghi đã xóa thì không còn trang để mở (trừ máy: không xóa cứng)
+    const href = r.MaBanGhi && NK_LINK[r.Sheet] && (r.HanhDong !== 'XOA' || ['ThietBi', 'GioChay', 'KeHoachBaoTri'].includes(r.Sheet)) ? NK_LINK[r.Sheet](r.MaBanGhi) : '';
+    const link = href ? `<a class="tb-id" href="${esc(href.split('/').slice(0, 2).join('/') + '/' + encodeURIComponent(href.split('/').slice(2).join('/')))}">${esc(r.MaBanGhi)}</a>`
+      : (r.MaBanGhi ? `<span class="tb-id">${esc(r.MaBanGhi)}</span>` : '');
     return `<div class="nk-item">
       <div class="nk-top"><span class="nk-act a-${esc(r.HanhDong)}">${act}</span>${link}<span class="sp"></span><span class="muted small">${esc(fmtTime(r.ThoiGian))}</span></div>
       <div class="nk-who">${ic('user')}${esc(r.NguoiThucHien)} · ${r.VaiTro === 'QL' ? t('roleQLShort') : t('roleKTVShort')}${r.Sheet ? ` · <span class="muted">${esc(r.Sheet)}</span>` : ''}</div>
@@ -5999,6 +8117,143 @@ const ACT = {
   },
   gsUndo: () => { S.gcSet.ch = {}; drawGsList(); },
   gsSave: el => gsSave(el),
+  /* Phiên 5 — hợp đồng */
+  hdTab: el => { S.hdf.tab = el.dataset.t; render(true); },
+  hdTabGo: el => { S.hdf.tab = el.dataset.t; S.hdf.q = ''; },
+  hdCsv: () => exportHdCsv(),
+  hdPickTb: async el => {
+    const F = S.hdForm;
+    if (!F) return;
+    const items = allTb().filter(x => x.TrangThai !== 'THANHLY' || F.ids.has(String(x.ID).toUpperCase()))
+      .sort((a, b) => String(a.ID).localeCompare(String(b.ID), 'en', { numeric: true }))
+      .map(x => ({ v: x.ID, vi: x.TenMay, zh: x.TenMayZH || dmZh('NHOMTB', x.NhomTB), sub: [x.MaNhaMay, dmVi('NHOMTB', x.NhomTB), dmVi('KHUVUC', x.ViTri)].filter(Boolean).join(' · ') }));
+    const v = await pickMany({ title: 'hdChooseTb', items, selected: F.ids });
+    if (!v || !S.hdForm) return;
+    F.ids = new Set(v);
+    el.innerHTML = hdTbLabel() + ic('down');
+    $('#hd-tbs').innerHTML = hdTbChips();
+  },
+  hdTbRemove: el => {
+    if (!S.hdForm) return;
+    S.hdForm.ids.delete(el.dataset.id);
+    $('#hd-tbs').innerHTML = hdTbChips();
+    const b = $('[data-act="hdPickTb"]');
+    if (b) b.innerHTML = hdTbLabel() + ic('down');
+  },
+  hdDur: el => {
+    const F = S.hdForm;
+    if (!F || !F.h.NgayBatDau) return;
+    F.h.NgayKetThuc = dAdd(dAdd(F.h.NgayBatDau, Number(el.dataset.m), 'THANG'), -1, 'NGAY');
+    const inp = $('#f-hd [data-hf="NgayKetThuc"]');
+    if (inp) { inp.value = F.h.NgayKetThuc; const box = inp.closest('.has-err'); if (box) { box.classList.remove('has-err'); $('.fe', box).innerHTML = ''; } }
+    $('#hd-dur-now').innerHTML = biTr(hdDurTr(F.h));
+  },
+  hdEnd: el => hdEndSheet(el.dataset.ma),
+  hdRestore: el => hdSimpleOp('khoiphuc', el.dataset.ma),
+  hdDelete: el => hdSimpleOp('xoa', el.dataset.ma),
+  /* Phiên 5 — bảo trì dự đoán */
+  ddTab: el => { S.ddf.tab = el.dataset.t; render(true); },
+  ddTabGo: el => { S.ddf.tab = el.dataset.t; S.ddf.q = ''; },
+  ddFilter: async el => { const k = el.dataset.k; const v = await pickKvNhom(k, S.ddf[k]); if (v === undefined) return; S.ddf[k] = v; render(true); },
+  ddFilterLoai: async () => {
+    const all = tr('ddAllTypes');
+    const v = await picker({ title: 'ddType', value: S.ddf.loai,
+      items: [{ v: '', vi: all.vi, zh: all.zh }].concat(DD_LOAI.map(l => { const x = tr('ddL' + l); return { v: l, vi: x.vi, zh: x.zh }; })) });
+    if (v === undefined) return;
+    S.ddf.loai = v; render(true);
+  },
+  ddCsv: () => exportDdCsv(),
+  ddLoadOld: el => ddLoadOld(el),
+  ddNew: () => ddNewFlow(null),
+  ddNewTb: el => ddNewFlow(el.dataset.id),
+  ddDelete: el => ddDelete(el.dataset.so),
+  ddPickChuan: async el => {
+    const F = S.ddForm;
+    if (!F) return;
+    const items = Object.keys(DD_CHUAN[F.loai]).concat('TUY').map(c => {
+      const x = ddChuanTr(F.loai, c);
+      return { v: c, vi: x.vi, zh: x.zh, sub: c !== 'TUY' ? ddZones(F.loai, DD_CHUAN[F.loai][c]) : '' };
+    });
+    const v = await picker({ title: 'ddStd', items, value: F.chuan });
+    if (!v || !S.ddForm) return;
+    F.chuan = v;
+    if (v !== 'TUY') F.ng = DD_CHUAN[F.loai][v].slice();
+    el.innerHTML = ddChuanLabel() + ic('down');
+    const box = el.closest('.fld'); box.classList.remove('has-err'); $('.fe', box).innerHTML = '';
+    $('#dd-ng').innerHTML = ddNgHtml();
+    F.pts.forEach((p, i) => ddPtRefresh(i));
+    ddSum();
+  },
+  ddPtAdd: () => {
+    const F = S.ddForm;
+    if (!F) return;
+    if (F.pts.length >= 60) { toast('eTooMany', 'warn'); return; }
+    F.pts.push({ t: '' });
+    $('#dd-pts').innerHTML = F.pts.map((p, i) => ddPtForm(p, i)).join('');
+    ddSum();
+    const last = $$('#dd-pts .dd-ptf').pop();
+    if (last) { last.scrollIntoView({ behavior: 'smooth', block: 'center' }); $('.dd-ptname', last).focus(); }
+  },
+  ddPtDel: async el => {
+    const F = S.ddForm;
+    if (!F) return;
+    const i = Number(el.dataset.i), p = F.pts[i];
+    const has = p && Object.keys(p).some(k => String(p[k] || '').trim());
+    if (has && !(await confirmDlg('deleteItem', { vi: p.t || tr('ddPoints').vi + ' ' + (i + 1), zh: '' }, { ok: 'delete', danger: true }))) return;
+    F.pts.splice(i, 1);
+    $('#dd-pts').innerHTML = F.pts.map((q, j) => ddPtForm(q, j)).join('');
+    ddSum();
+  },
+  /* Phiên 5 — RCA */
+  rcaTab: el => { S.rcaf.tab = el.dataset.t; render(true); },
+  rcaTabGo: el => { S.rcaf.tab = el.dataset.t; S.rcaf.q = ''; },
+  rcaFilter: async el => { const k = el.dataset.k; const v = await pickKvNhom(k, S.rcaf[k]); if (v === undefined) return; S.rcaf[k] = v; render(true); },
+  rcaCsv: () => exportRcaCsv(),
+  rcaPickTb: async el => {
+    const F = S.rcaForm;
+    if (!F) return;
+    const v = await picker({ title: 'scMay', items: tbPickItems(), value: F.r.IDThietBi });
+    if (!v || !S.rcaForm) return;
+    F.r.IDThietBi = v;
+    F.rel = new Set();
+    const y = window.scrollY; render(true); window.scrollTo(0, y);
+  },
+  rcaPickCat: async el => {
+    const F = S.rcaForm;
+    if (!F) return;
+    const none = tr('none');
+    const v = await picker({ title: 'rcaRootCat', value: F.r.NhomNguyenNhan || '',
+      items: [{ v: '', vi: none.vi, zh: none.zh }].concat(RCA_6M.map(k => { const x = tr('m6' + k); return { v: k, vi: x.vi, zh: x.zh }; })) });
+    if (v === undefined || !S.rcaForm) return;
+    F.r.NhomNguyenNhan = v;
+    el.innerHTML = (v ? t('m6' + v) : `<span class="muted">${t('choose')}</span>`) + ic('down');
+  },
+  hdkAdd: () => {
+    const F = S.rcaForm;
+    if (!F) return;
+    if (F.acts.length >= 30) { toast('eTooMany', 'warn'); return; }
+    F.acts.push({ Loai: F.acts.length ? 'KHACPHUC' : 'TAMTHOI', NoiDung: '', PhuTrach: '', Han: '', NgayXong: '', KetQua: '' });
+    $('#rca-acts').innerHTML = rcaActsForm();
+    const last = $$('#rca-acts .hdk-f').pop();
+    if (last) { last.scrollIntoView({ behavior: 'smooth', block: 'center' }); $('textarea', last).focus(); }
+  },
+  hdkDel: async el => {
+    const F = S.rcaForm;
+    if (!F) return;
+    const i = Number(el.dataset.i), a = F.acts[i];
+    if (a && a.NoiDung && !(await confirmDlg('deleteItem', { vi: a.NoiDung, zh: '' }, { ok: 'delete', danger: true }))) return;
+    F.acts.splice(i, 1);
+    $('#rca-acts').innerHTML = rcaActsForm();
+  },
+  hdkDone: el => hdkDoneSheet(el.dataset.so, el.dataset.stt, false),
+  hdkUndo: el => hdkDoneSheet(el.dataset.so, el.dataset.stt, true),
+  rcaVerify: el => rcaVerifySheet(el.dataset.so),
+  rcaReopen: el => rcaSimpleOp('molai', el.dataset.so),
+  rcaCancel: el => rcaCancelSheet(el.dataset.so),
+  rcaDelete: el => rcaSimpleOp('xoa', el.dataset.so),
+  nhacSettings: () => nhacSheet(),
+  nguongSettings: () => nguongSheet(),
+  nhacTest: el => nhacTest(el),
   scPickLoai: async el => {
     if (!S.scForm) return;
     const cur = S.scForm.LoaiHong;
@@ -6035,6 +8290,9 @@ function bindGlobal() {
     if (S.ktForm && !/^#\/(kt-moi\/|kt\/[^/]+\/sua)/.test(location.hash)) S.ktForm = null;
     if (!/^#\/gc(\/|$)/.test(location.hash)) S.gcEdit = {};
     if (S.gcSet && !/^#\/gc-cai/.test(location.hash)) S.gcSet = null;
+    if (S.hdForm && !/^#\/(hd-moi|hd\/[^/]+\/sua)/.test(location.hash)) S.hdForm = null;
+    if (S.ddForm && !/^#\/(dd-moi\/|dd\/[^/]+\/sua)/.test(location.hash)) S.ddForm = null;
+    if (S.rcaForm && !/^#\/(rca-moi|rca\/[^/]+\/sua)/.test(location.hash)) S.rcaForm = null;
     render();
   });
   window.addEventListener('online', () => { if (S.auth) refresh(true); else if (document.body.classList.contains('auth-mode')) renderAuth(); });

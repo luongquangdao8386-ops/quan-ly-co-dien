@@ -2,7 +2,7 @@
  * ⚠️ MỖI LẦN TẢI FILE MỚI LÊN GITHUB: tăng số VERSION bên dưới (v1 → v2 → v3…)
  *    để điện thoại nhận bản mới. Dữ liệu (API Apps Script) luôn lấy từ mạng.
  */
-const VERSION = 'qlcd-v4';
+const VERSION = 'qlcd-v5';
 const CORE = [
   './', './index.html', './style.css', './i18n.js', './qr.js', './app.js',
   './manifest.json', './icon-192.png', './icon-512.png', './icon-maskable-512.png'

@@ -602,8 +602,8 @@ const T = {
   yrPlan: { vi: 'Kế hoạch', zh: '计划' },
   yrPlanCol: { vi: 'Máy · công việc', zh: '设备 · 保养内容' },
   yrHint: {
-    vi: 'Chạm vào ô để mở kế hoạch. Các tháng tới được tính trước theo chu kỳ từ hạn hiện tại; số trong ô = số lần trong tháng.',
-    zh: '点击格子打开计划。未来月份按当前到期日与周期推算；格内数字 = 当月次数。'
+    vi: 'Chạm vào ô để mở kế hoạch. Các tháng tới được tính trước theo chu kỳ từ hạn hiện tại (kế hoạch theo giờ chạy: theo giờ chạy trung bình/ngày); số trong ô = số lần trong tháng.',
+    zh: '点击格子打开计划。未来月份按当前到期日与周期推算（按运行小时的计划：按日均运行小时推算）；格内数字 = 当月次数。'
   },
   // Chi tiết kế hoạch
   khDetail: { vi: 'Kế hoạch bảo trì', zh: '保养计划' },
@@ -711,5 +711,185 @@ const T = {
   btOfferScQ: { vi: n => `${n} hạng mục không đạt – tạo phiếu sửa chữa?`, zh: n => `${n}个项目不合格 – 创建维修单？` },
   btOfferScMsg: { vi: 'Mô tả phiếu sửa chữa được điền sẵn các hạng mục không đạt.', zh: '维修单描述将自动填入不合格项目。' },
   scFromBt: { vi: so => `Tạo từ phiếu bảo trì ${so}`, zh: so => `来自保养单 ${so}` },
-  scFromSrc: { vi: so => `Tạo từ phiếu ${so}`, zh: so => `来源单号 ${so}` }
+  scFromSrc: { vi: so => `Tạo từ phiếu ${so}`, zh: so => `来源单号 ${so}` },
+
+  /* ---------- Kiểm tra đầu ca (phiên 4) ---------- */
+  caN: { vi: n => `Ca ${n}`, zh: n => `第${n}班` },
+  caCurrent: { vi: 'Ca hiện tại', zh: '当前班次' },
+  caBackNow: { vi: '« Về ca hiện tại', zh: '« 返回当前班次' },
+  caSettings: { vi: 'Ca làm việc', zh: '班次设置' },
+  caCount: { vi: 'Số ca mỗi ngày', zh: '每天班次数' },
+  caCountN: { vi: n => `${n} ca`, zh: n => `${n}班` },
+  caStartN: { vi: n => `Ca ${n} bắt đầu`, zh: n => `第${n}班开始` },
+  caHint: {
+    vi: m => `Kiểm tra sớm tối đa ${m} phút trước giờ vào ca vẫn tính cho ca đó. Đổi giờ ca không ảnh hưởng phiếu đã ghi.`,
+    zh: m => `在班次开始前${m}分钟内点检，仍计入该班次。修改班次时间不影响已有记录。`
+  },
+  caBad: { vi: 'Giờ bắt đầu ca không hợp lệ hoặc bị trùng', zh: '班次开始时间无效或重复' },
+  ktTabTodo: { vi: 'Chưa kiểm tra', zh: '未点检' },
+  ktTabDone: { vi: 'Đã kiểm tra', zh: '已点检' },
+  ktTabBad: { vi: 'Không đạt', zh: '不合格' },
+  ktTodoPill: { vi: 'Chưa kiểm tra', zh: '未点检' },
+  ktOkPill: { vi: 'Đạt', zh: '合格' },
+  ktBadPill: { vi: 'Không đạt', zh: '不合格' },
+  ktDoCheck: { vi: 'Kiểm tra đầu ca', zh: '班前点检' },
+  ktDoneAt: { vi: h => `Đã kiểm tra ca này ${h}`, zh: h => `本班已点检 ${h}` },
+  ktNotInUse: { vi: 'Máy ngừng sử dụng / thanh lý – không kiểm tra', zh: '设备停用/报废 – 无需点检' },
+  ktNoTemplate: { vi: 'Nhóm máy này chưa có mẫu kiểm tra (Mẫu chung cũng trống)', zh: '该类设备无点检模板（通用模板也为空）' },
+  ktNotRequired: { vi: 'Máy đang dừng sửa – không bắt buộc', zh: '设备停机维修中 – 非必检' },
+  ktNoHistory: { vi: 'Máy chưa có phiếu kiểm tra', zh: '该设备暂无点检记录' },
+  ktProgNote: {
+    vi: n => `Máy đã kiểm tra / máy phải kiểm tra${n ? ` · ${n} máy có hạng mục không đạt` : ''}`,
+    zh: n => `已点检 / 应点检设备${n ? ` · ${n}台有不合格项` : ''}`
+  },
+  ktSkipNote: {
+    vi: n => `${n} máy đang dừng chờ sửa / đang sửa nên không bắt buộc kiểm tra (vẫn kiểm tra được từ trang máy).`,
+    zh: n => `${n}台设备停机待修/维修中，非必检（仍可在设备页点检）。`
+  },
+  ktAllDone: { vi: 'Đã kiểm tra đủ mọi máy trong ca', zh: '本班设备已全部点检' },
+  ktNoBad: { vi: 'Không có máy nào không đạt', zh: '无不合格设备' },
+  ktNoneYet: { vi: 'Chưa có máy nào được kiểm tra trong ca', zh: '本班尚未点检任何设备' },
+  ktDetail: { vi: 'Phiếu kiểm tra đầu ca', zh: '班前点检单' },
+  ktNotFound: { vi: so => `Không tìm thấy phiếu ${so}`, zh: so => `未找到点检单 ${so}` },
+  ktTplMissing: { vi: m => `Thiếu phiên bản mẫu ${m} – kéo xuống để tải lại`, zh: m => `缺少模板版本 ${m} – 请下拉刷新` },
+  ktTime: { vi: 'Thời gian kiểm tra', zh: '点检时间' },
+  ktNguoi: { vi: 'Người kiểm tra', zh: '点检人' },
+  ktTpl: { vi: 'Mẫu kiểm tra', zh: '点检模板' },
+  ktEditWindow: {
+    vi: h => `Kỹ thuật viên chỉ sửa được phiếu trong ${h} giờ sau khi ghi – nhờ quản lý sửa.`,
+    zh: h => `技术员仅可在记录后${h}小时内修改 – 请联系管理员。`
+  },
+  ktDelete: { vi: 'Xóa phiếu', zh: '删除点检单' },
+  ktDeleteQ: { vi: so => `Xóa hẳn phiếu ${so}?`, zh: so => `永久删除点检单 ${so}？` },
+  ktDeleteMsg: {
+    vi: 'Chỉ xóa phiếu ghi nhầm hoặc trùng. Nội dung phiếu vẫn được lưu trong nhật ký.',
+    zh: '仅删除误录或重复的点检单。内容仍保存在日志中。'
+  },
+  ktNewTitle: { vi: 'Kiểm tra đầu ca', zh: '班前点检' },
+  ktEditTitle: { vi: 'Sửa phiếu kiểm tra', zh: '编辑点检单' },
+  ktTplUsedN: { vi: (p, n) => `Mẫu: ${p.vi} · ${n} hạng mục`, zh: (p, n) => `模板：${p.zh || p.vi} · ${n}项` },
+  ktShiftTime: { vi: 'Ca & người kiểm tra', zh: '班次与点检人' },
+  ktNgayCa: { vi: 'Ngày ca', zh: '班次日期' },
+  ktCa: { vi: 'Ca', zh: '班次' },
+  ktAfterSaveHint: {
+    vi: 'Phiếu kiểm tra không cần duyệt. Có hạng mục không đạt → app đề nghị tạo phiếu sửa chữa.',
+    zh: '点检单无需审核。有不合格项时，系统将提示创建维修单。'
+  },
+  ktSaveNext: { vi: 'Lưu & máy tiếp', zh: '保存并下一台' },
+  ktDupWarn: {
+    vi: (h, n) => `Máy đã được kiểm tra ca này lúc ${h}${n ? ' – ' + n : ''}. Lưu nữa sẽ thành lần kiểm tra lại.`,
+    zh: (h, n) => `本班已于 ${h}${n ? ' – ' + n : ''} 点检。再次保存将记为复检。`
+  },
+  ktSaved: { vi: so => `Đã lưu ${so}`, zh: so => `已保存 ${so}` },
+  ktSavedBad: { vi: (so, n) => `Đã lưu ${so} – ${n} hạng mục không đạt`, zh: (so, n) => `已保存 ${so} – ${n}项不合格` },
+  ktTplChanged: {
+    vi: 'Mẫu kiểm tra vừa được sửa – đã tải mẫu mới, kiểm tra lại các hạng mục rồi lưu.',
+    zh: '点检模板刚被修改 – 已加载新模板，请核对项目后保存。'
+  },
+  ktShiftDateErr: { vi: 'Ngày ca cách ngày kiểm tra quá 1 ngày', zh: '班次日期与点检日期相差超过1天' },
+  scFromKt: { vi: so => `Tạo từ phiếu kiểm tra đầu ca ${so}`, zh: so => `来自班前点检单 ${so}` },
+  ktCsvRange: { vi: 'Xuất CSV kiểm tra đầu ca', zh: '导出班前点检CSV' },
+  csvRangeShort: { vi: 'Theo khoảng ngày', zh: '按日期范围' },
+  rgFrom: { vi: 'Từ ngày', zh: '开始日期' },
+  rgTo: { vi: 'Đến ngày', zh: '结束日期' },
+  csvCapped: { vi: 'Quá nhiều dòng – chỉ xuất 20.000 dòng đầu, hãy chọn khoảng ngày ngắn hơn', zh: '数据过多 – 仅导出前20000行，请缩短日期范围' },
+  today: { vi: 'Hôm nay', zh: '今天' },
+
+  /* ---------- Giờ chạy (phiên 4) ---------- */
+  hoursUnit: { vi: 'giờ', zh: '小时' },
+  fKieuGioChay: { vi: 'Ghi giờ chạy', zh: '运行小时记录' },
+  gcKNONE: { vi: 'Không ghi giờ chạy', zh: '不记录运行小时' },
+  gcKDONGHO: { vi: 'Đồng hồ giờ chạy', zh: '计时表读数' },
+  gcKNGAY: { vi: 'Số giờ mỗi ngày', zh: '每日运行小时' },
+  gcKNONEShort: { vi: 'Không', zh: '不记录' },
+  gcKDONGHOShort: { vi: 'Đồng hồ', zh: '计时表' },
+  gcKNGAYShort: { vi: 'Giờ/ngày', zh: '小时/天' },
+  gcKNONEHint: { vi: 'Máy không cần theo dõi giờ chạy', zh: '无需跟踪运行小时' },
+  gcKDONGHOHint: { vi: 'Máy có đồng hồ giờ chạy: ghi chỉ số đồng hồ', zh: '有计时表：记录读数' },
+  gcKNGAYHint: { vi: 'Không có đồng hồ: ghi số giờ máy chạy trong ngày', zh: '无计时表：记录当天运行小时' },
+  gcNotTracked: { vi: 'Máy chưa bật ghi giờ chạy', zh: '该设备未启用运行小时记录' },
+  gcSetKieu: { vi: 'Cách ghi giờ chạy', zh: '运行小时记录方式' },
+  gcLuyKe: { vi: 'Giờ chạy lũy kế', zh: '累计运行小时' },
+  gcAvg: { vi: 'Trung bình / ngày', zh: '日均' },
+  gcAvgN: { vi: v => `TB ${v} h/ngày`, zh: v => `日均${v}小时` },
+  gcNoData: { vi: 'Chưa ghi giờ chạy lần nào', zh: '尚无运行小时记录' },
+  gcRecord: { vi: 'Ghi giờ chạy', zh: '记录运行小时' },
+  gcChiSo: { vi: 'Chỉ số đồng hồ giờ chạy', zh: '计时表读数' },
+  gcSoGio: { vi: 'Số giờ máy chạy', zh: '运行小时数' },
+  gcChiSoShort: { vi: 'Chỉ số', zh: '读数' },
+  gcSoGioShort: { vi: 'Giờ chạy', zh: '运行小时' },
+  gcResetTag: { vi: 'Thay đồng hồ', zh: '更换计时表' },
+  gcReset: { vi: 'Đồng hồ đã thay mới / reset', zh: '计时表已更换/归零' },
+  gcResetNote: { vi: 'Lũy kế nối tiếp, không cộng giờ', zh: '累计延续，不计增量' },
+  gcHint: {
+    vi: 'Mỗi máy ghi một lần mỗi ngày. Máy có đồng hồ: nhập chỉ số; máy không có đồng hồ: nhập số giờ đã chạy kể từ lần ghi trước.',
+    zh: '每台设备每天记录一次。有计时表：输入读数；无计时表：输入自上次记录以来的运行小时。'
+  },
+  gcHintDH: { vi: 'Nhập chỉ số đang hiện trên đồng hồ giờ chạy của máy.', zh: '输入设备计时表当前读数。' },
+  gcHintNG: { vi: 'Nhập số giờ máy đã chạy kể từ lần ghi trước (tối đa 24 giờ mỗi ngày).', zh: '输入自上次记录以来的运行小时（每天最多24小时）。' },
+  gcSetup: { vi: 'Chọn máy ghi giờ chạy', zh: '设置运行小时记录设备' },
+  gcSetupIntro: {
+    vi: 'Chọn cách ghi cho từng máy: Đồng hồ (máy có đồng hồ giờ chạy – ghi chỉ số) hoặc Giờ/ngày (ghi số giờ máy chạy). Máy để "Không" sẽ không hiện ở màn hình ghi giờ chạy.',
+    zh: '为每台设备选择记录方式：计时表（有计时表 – 记录读数）或 小时/天（记录运行小时）。设为“不记录”的设备不会出现在运行小时记录页面。'
+  },
+  gcSetAllShown: { vi: 'Đặt cho mọi máy đang hiện:', zh: '对当前列表全部设为：' },
+  gcSaveKieuN: { vi: n => `Lưu (${n} máy)`, zh: n => `保存（${n}台）` },
+  gcKieuSaved: { vi: n => `Đã cập nhật ${n} máy`, zh: n => `已更新${n}台设备` },
+  gcTodayN: { vi: (d, n) => `Giờ chạy hôm nay ${d}/${n}`, zh: (d, n) => `今日运行小时 ${d}/${n}` },
+  gcPrevDH: { vi: (d, v) => `Lần trước ${d}: ${v}`, zh: (d, v) => `上次 ${d}：${v}` },
+  gcPrevNG: { vi: (d, v) => `Lần trước ${d}: ${v} h`, zh: (d, v) => `上次 ${d}：${v}小时` },
+  gcFirst: { vi: 'Lần ghi đầu tiên', zh: '首次记录' },
+  gcDaysN: { vi: n => `gộp ${n} ngày`, zh: n => `合计${n}天` },
+  gcLocked: { vi: d => `Đã ghi ngày ${d} – không nhập bù ngày trước đó`, zh: d => `已记录 ${d} – 不能补录更早日期` },
+  gcNoneTracked: { vi: 'Chưa có máy nào ghi giờ chạy', zh: '尚无记录运行小时的设备' },
+  gcLess: { vi: 'Nhỏ hơn lần trước', zh: '小于上次读数' },
+  gcLessErr: {
+    vi: v => `Nhỏ hơn lần trước (${v}) – nếu đã thay/reset đồng hồ thì đánh dấu ô bên dưới`,
+    zh: v => `小于上次读数（${v}）– 若已更换/归零计时表请勾选下方`
+  },
+  gcMax: { vi: n => `Tối đa ${n} giờ`, zh: n => `最多${n}小时` },
+  gcUndo: { vi: 'Bỏ thay đổi', zh: '撤销修改' },
+  gcSaveN: { vi: n => `Lưu (${n} máy)`, zh: n => `保存（${n}台）` },
+  gcSaved: { vi: n => `Đã lưu giờ chạy ${n} máy`, zh: n => `已保存${n}台设备运行小时` },
+  gcEditWindow: {
+    vi: 'Đã ghi rồi – kỹ thuật viên chỉ sửa được trong 12 giờ sau khi ghi, và chỉ lần ghi gần nhất',
+    zh: '已记录 – 技术员仅可在记录后12小时内修改最近一次记录'
+  },
+  gcDeleteQ: { vi: (id, d) => `Xóa số giờ chạy ${id} ngày ${d}?`, zh: (id, d) => `删除 ${id} ${d} 的运行小时记录？` },
+  gcDeleteMsg: { vi: 'Chỉ xóa được lần ghi gần nhất. Nội dung vẫn lưu trong nhật ký.', zh: '仅可删除最近一次记录。内容仍保存在日志中。' },
+  gcDeleted: { vi: 'Đã xóa', zh: '已删除' },
+  gcOnlyLatest: { vi: 'Chỉ sửa / xóa được lần ghi gần nhất của máy', zh: '仅可修改/删除该设备最近一次记录' },
+  gcCsvRange: { vi: 'Xuất CSV giờ chạy', zh: '导出运行小时CSV' },
+
+  /* ---------- Bảo trì theo giờ chạy (phiên 4) ---------- */
+  cycOrHours: { vi: (c, h) => `${c.vi} hoặc ${h} giờ chạy`, zh: (c, h) => `${c.zh}或运行${h}小时` },
+  hrsLeft: { vi: h => `Còn ${h} giờ chạy`, zh: h => `剩余${h}运行小时` },
+  hrsLate: { vi: h => `Quá ${h} giờ chạy`, zh: h => `超出${h}运行小时` },
+  hrsUnknown: { vi: 'Chưa có mốc giờ chạy', zh: '无运行小时基准' },
+  hrsNoBase: {
+    vi: 'Chưa có mốc giờ chạy – nhập "đã chạy bao nhiêu giờ" trong kế hoạch, hoặc tự có sau lần bảo trì đầu tiên được duyệt',
+    zh: '无运行小时基准 – 请在计划中填写已运行小时，或在首次保养审核后自动建立'
+  },
+  hrsNoTrack: {
+    vi: 'Máy chưa bật ghi giờ chạy – bật ở trang máy (Cách ghi giờ chạy) để app tính hạn theo giờ',
+    zh: '设备未启用运行小时记录 – 请在设备页开启，系统才能按小时计算到期'
+  },
+  khHoursRun: { vi: 'Giờ chạy từ lần bảo trì trước', zh: '上次保养后运行小时' },
+  khCycleHours: { vi: 'Chu kỳ theo giờ chạy (tùy chọn)', zh: '按运行小时周期（可选）' },
+  khCycleHoursPh: { vi: 'VD 2000', zh: '例：2000' },
+  khCycleHoursHint: {
+    vi: 'Để trống nếu chỉ theo lịch. Có cả hai: cái nào tới trước thì đến hạn trước.',
+    zh: '仅按日历则留空。两者都有时：以先到者为准。'
+  },
+  khGioDaChay: { vi: 'Máy đã chạy bao nhiêu giờ kể từ lần bảo trì gần nhất', zh: '上次保养后已运行小时' },
+  khGioMulti: {
+    vi: 'Áp dụng cho từng máy theo số giờ chạy ghi gần nhất. Máy chưa có số liệu: tính từ lần bảo trì đầu tiên được duyệt.',
+    zh: '按各设备最近记录的运行小时计算。无数据的设备：从首次保养审核后开始计算。'
+  },
+  khGioNoData: { vi: 'Máy chưa ghi giờ chạy – mốc giờ tính từ lần bảo trì đầu tiên được duyệt', zh: '设备尚无运行小时记录 – 从首次保养审核后开始计算' },
+  khGioNow: { vi: (v, d) => `Giờ chạy lũy kế hiện tại: ${v} h (ghi ${d})`, zh: (v, d) => `当前累计运行小时：${v}小时（${d}记录）` },
+  btGioAutoHint: {
+    vi: (v, d) => `Điền sẵn theo giờ chạy lũy kế ghi gần nhất (${v} h, ${d}); máy có đồng hồ thì sửa theo chỉ số lúc bảo trì.`,
+    zh: (v, d) => `已按最近记录的累计运行小时自动填写（${v}小时，${d}）；有计时表请按保养时读数修改。`
+  }
 };
